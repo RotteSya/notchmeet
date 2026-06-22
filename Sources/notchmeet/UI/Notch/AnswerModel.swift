@@ -1,6 +1,8 @@
-import SwiftUI
+import Combine
 
 /// Observable state the notch renders. Mutated on the main thread by the pipeline.
+/// `ObservableObject` / `@Published` are Combine types — the notch is pure AppKit and observes
+/// this via `objectWillChange`, no SwiftUI involved.
 final class AnswerModel: ObservableObject {
     /// `ready` = armed but NOT capturing (nothing leaves the machine). `listening` and the
     /// AI-working states (`thinking`/`streaming`/`presenting`) only occur while recording.

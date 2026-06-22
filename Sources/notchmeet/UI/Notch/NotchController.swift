@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 import Combine
 
 /// Hosts the notch panel and drives expand/collapse from the AnswerModel.
@@ -17,6 +16,9 @@ final class NotchController {
     private let panel: NotchPanel
     private var hovering = false
     private var settingsMenuOpen = false
+    /// 仅在本轮进入过问答（status 到过 thinking）后，才为「问题/意图」两行预留高度。
+    /// 纯 hover / ready 态保持紧凑；卡片收起时复位，下一次展开重新判断。
+    private var reservesContentRows = false
     private var collapseWork: DispatchWorkItem?
     private var resizeScheduled = false
     private var lastHandledStatus: AnswerModel.Status?
@@ -24,7 +26,6 @@ final class NotchController {
 
     private let expandedWidth: CGFloat = 520
     private let minimumExpandedHeight: CGFloat = 72
-    private let expandedHeightStep: CGFloat = 28
 
     init() {
         panel = NotchPanel(contentRect: .zero)
@@ -34,11 +35,8 @@ final class NotchController {
             onSettings: { [weak self] in self?.showSettings() },
             onToggleRecording: { [weak self] in self?.onToggleRecording?() }
         )
-        let host = NSHostingView(rootView: view)
-        host.autoresizingMask = [.width, .height]
-        host.wantsLayer = true
-        host.layer?.backgroundColor = .clear
-        panel.contentView = host
+        view.autoresizingMask = [.width, .height]
+        panel.contentView = view
         panel.setFrame(frame(expanded: false), display: true)
 
         // Any model change → re-evaluate expand state after @Published has committed its
@@ -78,9 +76,16 @@ final class NotchController {
     private func frame(expanded: Bool) -> NSRect {
         let s = screen.frame
         if expanded {
-            let w = expandedWidth
-            let h = expandedHeight()
-            return NSRect(x: (s.midX - w / 2).rounded(), y: (s.maxY - h).rounded(),
+            // The visible card is `expandedWidth × expandedHeight`; the panel itself is grown
+            // by a transparent margin (sides + bottom, never the top) so the card can cast a
+            // soft drop shadow without it being clipped at the panel edge.
+            let m = NotchMetrics.shadowMarginH
+            let mb = NotchMetrics.shadowMarginBottom
+            let cardW = expandedWidth
+            let cardH = expandedHeight()
+            let w = cardW + m * 2
+            let h = cardH + mb
+            return NSRect(x: (s.midX - cardW / 2 - m).rounded(), y: (s.maxY - h).rounded(),
                           width: w.rounded(), height: h.rounded())
         }
         // Collapsed: extend to both sides of the notch so the indicator and settings
@@ -93,36 +98,37 @@ final class NotchController {
     }
 
     private func expandedHeight() -> CGFloat {
+        // 高度只跟随答案文本的行数。header、识别到的问题、意图三块按固定高度常驻
+        // （始终预留，即使此刻为空），所以它们出现/消失不再让高度阶跃；答案区随
+        // 文字一行一行单调、连续地增长，不再有“突然长一截”。
         let width = expandedWidth - 40
-        let text = model.answer.isEmpty ? AppStrings.current.runtimeMessage(model.message) : model.answer
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = model.answer.isEmpty ? 2 : 3
-        let font = NSFont.systemFont(ofSize: model.answer.isEmpty ? 13 : 15)
-        let attr = NSAttributedString(string: text, attributes: [
-            .font: font,
-            .paragraphStyle: paragraph,
-        ])
-        let rect = attr.boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        let intentHeight: CGFloat = model.intentLabel.isEmpty ? 0 : 18
-        // Recognized-question row: label + up to 2 wrapped lines (12pt) + the VStack gap.
-        let questionHeight: CGFloat = model.question.isEmpty ? 0 : 38
-        let chromeHeight: CGFloat = model.answer.isEmpty ? 54 : 62
-        let desired = max(minimumExpandedHeight, ceil(rect.height) + chromeHeight + intentHeight + questionHeight)
-        // Quantize by roughly one line so streaming remains calm, without an arbitrary
-        // card-height cap: normal answers grow until every line is visible.
-        let natural = ceil(desired / expandedHeightStep) * expandedHeightStep
-        return min(natural, floor(screen.frame.height))
+        // Measure the SAME string the view renders, with the SAME typography (NotchType), so the
+        // panel height always matches the drawn answer — no last-line clip, no trailing gap.
+        let display = NotchPresentation.text(answer: model.answer, message: model.message,
+                                             errorDetail: model.errorDetail, strings: .current)
+        let answerHeight = NotchType.answerHeight(display, empty: model.answer.isEmpty, width: width)
+        // 进入问答后预留「问题(标签+最多2行,38) + 意图(18)」，使答案到达不再阶跃；
+        // 纯 hover/ready 态（尚未进入问答）用紧凑 chrome(54)，下半不留空。
+        let chrome: CGFloat = reservesContentRows ? (62 + 38 + 18) : 54
+        let desired = max(minimumExpandedHeight, chrome + answerHeight)
+        // Leave room for the bottom shadow margin so the card never exceeds the display.
+        return min(desired, floor(screen.frame.height) - NotchMetrics.shadowMarginBottom)
+    }
+
+    /// System Reduce Motion: collapse every transition to an instant cut.
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     private func setFrame(expanded: Bool, animate: Bool) {
         let f = frame(expanded: expanded)
-        if animate {
+        if animate && !reduceMotion {
+            // A soft, overshoot-free settle (~out-expo) matched in duration to the NotchView
+            // morph tween (NotchPalette.morphDuration) driving the shape radii + content, so the
+            // frame and its contents arrive as one body — the liquid notch morph.
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.28
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.82, 0.22, 1.00)
+                ctx.duration = 0.42
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.90, 0.24, 1.00)
                 panel.animator().setFrame(f, display: true)
             }
         } else {
@@ -134,8 +140,9 @@ final class NotchController {
         guard model.expanded else { return }
         let target = frame(expanded: true)
         guard abs(panel.frame.height - target.height) >= 2 else { return }
+        if reduceMotion { panel.setFrame(target, display: true); return }
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
+            ctx.duration = 0.24
             ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.80, 0.25, 1.00)
             panel.animator().setFrame(target, display: true)
         }
@@ -144,6 +151,8 @@ final class NotchController {
     private func setExpanded(_ on: Bool) {
         if model.expanded != on {
             model.expanded = on
+            // 收起即结束本轮：下次展开（hover/ready）回到紧凑，不再预留问题/意图行。
+            if !on { reservesContentRows = false }
             setFrame(expanded: on, animate: true)
         }
     }
@@ -185,11 +194,16 @@ final class NotchController {
             lastHandledStatus = model.status
             switch model.status {
             case .thinking, .streaming, .presenting:
+                reservesContentRows = true
                 collapseWork?.cancel()
                 setExpanded(true)
             case .listening, .ready:
+                // 一轮问答结束、回到待机：清掉本轮预留，下次 hover 回到紧凑矮卡(图1)，
+                // 不再残留成带大片留白的高卡(图2)。
+                reservesContentRows = false
                 if !hovering { scheduleCollapse(after: 6) }
             case .error:
+                reservesContentRows = true
                 collapseWork?.cancel()
                 setExpanded(true)
                 if !hovering { scheduleCollapse(after: 12) }
