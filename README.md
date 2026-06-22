@@ -21,6 +21,7 @@ swift run                # 跑（mock 模式：刘海出现并演示流式答案
 scripts/bundle.sh        # 打成 .app（带稳定 Bundle ID，TCC 权限需要）
 open .build/notchmeet.app
 scripts/dev-run.sh       # 改完代码用这个：重打包 + 杀旧实例 + 重启（加 -l 前台看日志）
+scripts/dmg.sh           # 出 release：打签名 .dmg 到 .build/（版本取自 Info.plist）
 ```
 
 > `.app` 跑的是 **release** 二进制，所以改完代码后 `swift build` 看不到变化——要 `scripts/bundle.sh` 或 `scripts/dev-run.sh` 重打包。
