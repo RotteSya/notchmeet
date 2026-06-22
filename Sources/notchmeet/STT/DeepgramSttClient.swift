@@ -15,7 +15,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     private var keepAlive: Timer?
     private var started = false
     private(set) var isConnected = false
-    private var reconnectDelay: TimeInterval = 1
+    private var reconnectDelay: TimeInterval = 0.5
     private var pendingFinal = ""
     private var lastConf = 0.0
     private let dbg = ProcessInfo.processInfo.environment["FI_STT_DEBUG"] == "1"
@@ -37,6 +37,10 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     }
 
     func write(_ pcm: Data) {
+        // Drop audio while the socket is down/reconnecting — sending to a dead task only
+        // logs errors and Deepgram wouldn't receive it anyway. Drops happen during silence
+        // (that's when idle sockets die), so no interviewer speech is lost.
+        guard isConnected else { return }
         task?.send(.data(pcm)) { err in
             if let err { NSLog("[deepgram] send err: %@", String(describing: err)) }
         }
@@ -45,7 +49,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     private func connect() {
         var c = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
         c.queryItems = [
-            .init(name: "model", value: "nova-3"),
+            .init(name: "model", value: "nova-2"),
             .init(name: "language", value: language),
             .init(name: "encoding", value: "linear16"),
             .init(name: "sample_rate", value: "16000"),
@@ -57,11 +61,12 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             .init(name: "utterance_end_ms", value: "1000"),
             .init(name: "vad_events", value: "true"),
         ]
-        // nova-3 keyterm prompting — boost 就活 domain vocab (御社/志望動機/外食産業…).
-        let keyterms = ["御社", "志望動機", "志望理由", "自己紹介", "ガクチカ", "学生時代",
+        // nova-2 keyword boosting (legacy `keywords` param; nova-3's `keyterm` is a different
+        // feature) — bias toward 就活 domain vocab (御社/志望動機/外食産業…).
+        let keywords = ["御社", "志望動機", "志望理由", "自己紹介", "ガクチカ", "学生時代",
                         "強み", "弱み", "長所", "短所", "きっかけ", "外食産業", "人手不足",
                         "課題", "達成", "努力", "チーム", "リーダー", "逆質問", "キャリア"]
-        c.queryItems? += keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
+        c.queryItems? += keywords.map { URLQueryItem(name: "keywords", value: $0) }
         guard let url = c.url else { onError?(LLMError.badURL); return }
         var r = URLRequest(url: url)
         r.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -71,7 +76,8 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
         receive()
         keepAlive?.invalidate()
         keepAlive = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
-            self?.task?.send(.string("{\"type\":\"KeepAlive\"}")) { _ in }
+            guard let self, self.isConnected else { return }
+            self.task?.send(.string("{\"type\":\"KeepAlive\"}")) { _ in }
         }
     }
 
@@ -81,6 +87,9 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             switch result {
             case .failure(let err):
                 self.isConnected = false
+                // If we initiated the teardown (stop() cancels the socket), the resulting
+                // ENOTCONN is expected — don't surface it as an error or try to reconnect.
+                guard self.started else { return }
                 self.onError?(err)
                 self.scheduleReconnect()
             case .success(let msg):
@@ -137,17 +146,20 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
 
     private func scheduleReconnect() {
         guard started else { return }
+        isConnected = false
+        pendingFinal = ""                            // drop a stale partial across the gap
         let delay = reconnectDelay
-        reconnectDelay = min(reconnectDelay * 2, 30)
+        reconnectDelay = min(reconnectDelay * 2, 5)  // fast recovery — this is a live interview
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.started else { return }
+            NSLog("[deepgram] reconnecting after %.1fs", delay)
             self.connect()
         }
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol protocol: String?) {
-        reconnectDelay = 1
+        reconnectDelay = 0.5
         isConnected = true
         NSLog("[deepgram] connected (%@)", language)
     }
