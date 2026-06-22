@@ -1,14 +1,14 @@
 import AppKit
-import Combine
-import SwiftUI
 
-/// Owns the settings window and keeps the AppKit boundary deliberately small.
-/// The SwiftUI hierarchy lives in focused files beside this controller.
+/// Owns the settings window. The content is now a pure-AppKit `SettingsRoot` (no SwiftUI
+/// hosting), so every plane, control, and transition is hand-drawn to the product's obsidian
+/// design language. The window is kept alive across closes so navigation + scroll state
+/// persist and the Metal backdrop isn't recompiled each open; the GPU is paused while hidden.
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var root: SettingsRoot?
     private let previousPolicy: NSApplication.ActivationPolicy
     private let store: ScriptStore
-    private let nav = SettingsNav()
 
     var onKeysChanged: (() -> Void)?
     var onBuildBank: (() -> Void)?
@@ -22,16 +22,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func show(section: SettingsSection? = nil) {
-        if let section { nav.section = section }
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+        if let window, let root {
+            if let section { root.show(section, animated: true) }
+            root.setRunning(true)
+            present(window)
             return
         }
 
-        let view = SettingsView(
+        let root = SettingsRoot(
             store: store,
-            nav: nav,
+            initial: section ?? .general,
             onKeysChanged: { [weak self] in self?.onKeysChanged?() },
             onBuildBank: { [weak self] in self?.onBuildBank?() },
             onDeleteData: { [weak self] in self?.onDeleteData?() },
@@ -39,7 +39,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 840, height: 588),
             styleMask: [.titled, .fullSizeContentView, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -48,60 +48,49 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
-        window.backgroundColor = SettingsPalette.windowNSColor
+        window.backgroundColor = SK.bg
         window.appearance = NSAppearance(named: .darkAqua)
         window.animationBehavior = .documentWindow
-        window.contentMinSize = NSSize(width: 720, height: 520)
-        window.center()
+        window.contentMinSize = NSSize(width: 760, height: 540)
         window.isReleasedWhenClosed = false
+        // The settings window is excluded from screen capture (the live answer must never leak
+        // into a shared frame). A DEBUG-only escape hatch lets local visual QA screenshot it.
+        #if DEBUG
+        window.sharingType = Self.visualQA ? .readOnly : .none
+        #else
         window.sharingType = .none
+        #endif
         window.delegate = self
+        window.contentView = root
+        window.center()
 
-        let hosting = NSHostingView(rootView: view)
-        hosting.sizingOptions = []
-        hosting.layer?.backgroundColor = .clear
-        window.contentView = hosting
         self.window = window
+        self.root = root
+        present(window)
+    }
 
+    private func present(_ window: NSWindow) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        #if DEBUG
+        if Self.visualQA {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                try? "\(window.windowNumber)".write(toFile: "/tmp/nm-settings-window.txt", atomically: true, encoding: .utf8)
+                NSLog("FI_SETTINGS_WINDOW=%ld", window.windowNumber)
+            }
+        }
+        #endif
+    }
+
+    /// Local visual-QA toggle (env or launch arg), DEBUG-only at the call sites.
+    static var visualQA: Bool {
+        ProcessInfo.processInfo.environment["FI_VISUAL_QA"] == "1"
+            || ProcessInfo.processInfo.arguments.contains("--visual-qa")
     }
 
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(previousPolicy)
-        window = nil
+        root?.setRunning(false)
     }
-}
-
-enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, scripts, keys, answer, privacy, about
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .general: "gearshape"
-        case .scripts: "doc.text"
-        case .keys: "key"
-        case .answer: "sparkles"
-        case .privacy: "lock"
-        case .about: "info.circle"
-        }
-    }
-
-    func title(_ strings: AppStrings) -> String {
-        switch self {
-        case .general: strings.secGeneral
-        case .scripts: strings.secScripts
-        case .keys: strings.secKeys
-        case .answer: strings.secAnswer
-        case .privacy: strings.secPrivacy
-        case .about: strings.secAbout
-        }
-    }
-}
-
-final class SettingsNav: ObservableObject {
-    @Published var section: SettingsSection = .general
 }

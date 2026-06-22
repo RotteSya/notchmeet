@@ -29,7 +29,20 @@ final class AppController {
         observeLanguageChanges()
         if ProcessInfo.processInfo.environment["FI_PREP"] == "1" { runPrep() }
         reloadPipeline()
-        if !Settings.onboarded { openOnboarding() }
+        // Dev-only visual-QA hook: open settings straight to a section so the redesign can be
+        // screenshotted (FI_OPEN_SETTINGS=privacy, or `--open-settings privacy`). Never fires
+        // without the env var / launch arg.
+        let args = ProcessInfo.processInfo.arguments
+        let argSection = args.firstIndex(of: "--open-settings").flatMap { i in
+            args.indices.contains(i + 1) ? args[i + 1] : nil
+        }
+        if let raw = ProcessInfo.processInfo.environment["FI_OPEN_SETTINGS"] ?? argSection {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.openSettings(section: SettingsSection(rawValue: raw))
+            }
+        } else if !Settings.onboarded {
+            openOnboarding()
+        }
     }
 
     /// A menu-bar-only app has no Edit menu, so ⌘X/⌘C/⌘V key-equivalents aren't
