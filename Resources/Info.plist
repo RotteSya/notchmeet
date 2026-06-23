@@ -2,32 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>notchmeet</string>
-    <key>CFBundleDisplayName</key>
-    <string>notchmeet</string>
-    <key>CFBundleExecutable</key>
-    <string>notchmeet</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon.icns</string>
-    <!-- STABLE Bundle ID — do not change; TCC (audio/screen) permissions are keyed to it (PLAN §11). -->
-    <key>CFBundleIdentifier</key>
-    <string>com.notchmeet.app</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <!-- Accessory app: no Dock icon, lives at the notch. -->
-    <key>LSUIElement</key>
-    <true/>
-    <!-- Core Audio tap captures system output audio (the interviewer) = audio-recording TCC. -->
-    <key>NSMicrophoneUsageDescription</key>
-    <string>面接官の音声をリアルタイムで文字起こしするために、システム音声の録音を使用します。</string>
-    <key>NSAudioCaptureUsageDescription</key>
-    <string>面接官の音声を文字起こしするために、システム音声をキャプチャします。</string>
+	<key>CFBundleDisplayName</key>
+	<string>notchmeet</string>
+	<key>CFBundleExecutable</key>
+	<string>notchmeet</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.notchmeet.app</string>
+	<key>CFBundleName</key>
+	<string>notchmeet</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>面接官の音声を文字起こしするために、システム音声をキャプチャします。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>面接官の音声をリアルタイムで文字起こしするために、システム音声の録音を使用します。</string>
 </dict>
 </plist>
