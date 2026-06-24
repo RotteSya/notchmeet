@@ -31,7 +31,23 @@ final class TurnManager: @unchecked Sendable {
     private var currentQuestion = ""
     private var history: [(q: String, a: String)] = []   // 深掘り context
 
-    var paused = false
+    // Utterance coalescing (§6). 日本人面接官は「よろしくお願いします。まず自己紹介を…」のように
+    // 寒暄＋本題を一続きで話す。Deepgram は句点ごとに final を返すため、本題を待たずに前半だけで
+    // 答えてしまっていた。final が来てもすぐターンを起こさず、`settleWindow` の静寂が続いて初めて
+    // その間の final 群を 1 つの質問として確定する。
+    private var pendingQ = ""
+    private var settleWork: DispatchWorkItem?
+    /// 無音がこの長さ続いたら発話終了とみなす。FI_SETTLE_MS（ミリ秒）で上書き可。
+    private let settleWindow: TimeInterval = {
+        if let s = ProcessInfo.processInfo.environment["FI_SETTLE_MS"], let v = Double(s), v >= 0 {
+            return v / 1000
+        }
+        return 0.8
+    }()
+
+    var paused = false {
+        didSet { if paused { cancelSettle() } }   // 録音停止/デモ中: 聞きかけの発話を捨てる
+    }
 
     init(model: AnswerModel,
          generator: AnswerGenerator,
@@ -47,11 +63,14 @@ final class TurnManager: @unchecked Sendable {
         self.scriptStore = scriptStore
     }
 
-    /// Feed STT events. Call on the main thread.
+    /// Feed STT events. Call on the main thread. Finals are not answered immediately; they are
+    /// coalesced across `settleWindow` so a 寒暄＋本題 utterance becomes ONE turn (see above).
     func handleTranscript(_ t: Transcript) {
         guard !paused else { return }
         if !t.isFinal {
             if sttDebug { NSLog("[stt] … %@", t.text) } // interim — FI_STT_DEBUG=1 to watch
+            // 面接官がまだ話している。確定待ちの発話があれば確定を先送りし、本題まで取り込む。
+            if !pendingQ.isEmpty { armSettle() }
             return
         }
         let q = t.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,18 +79,50 @@ final class TurnManager: @unchecked Sendable {
             return
         }
         // S2: see exactly what the interviewer's speech was recognized as (+confidence).
-        NSLog("[stt] Q(%.2f): %@", t.confidence, q)
+        if sttDebug { NSLog("[stt] final(%.2f): %@", t.confidence, q) }
+        pendingQ = pendingQ.isEmpty ? q : pendingQ + " " + q
+        armSettle()
+    }
+
+    /// (Re)arm the settle timer; every new final/interim pushes the commit out by `settleWindow`.
+    private func armSettle() {
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.commitPending() }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + settleWindow, execute: work)
+    }
+
+    private func cancelSettle() {
+        settleWork?.cancel(); settleWork = nil; pendingQ = ""
+    }
+
+    /// Silence held for `settleWindow` → the interviewer finished. Commit the coalesced finals
+    /// as ONE question and start the turn.
+    private func commitPending() {
+        settleWork = nil
+        let q = pendingQ.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingQ = ""
+        guard !q.isEmpty, !paused else { return }
+        NSLog("[stt] Q: %@", q)
         startTurn(question: q)
     }
 
-    /// Backchannel / too-short filter so 「なるほど」 doesn't trigger an answer (§6).
+    /// Backchannel / greeting / too-short filter so 「なるほど」 や単独の「よろしくお願いします」 が
+    /// 答えを誘発しないようにする（§6）。末尾の句読点を外してから照合するので「なるほど。」「なるほど！」
+    /// もまとめて弾く。長さ判定は元テキストのまま（terse な質問「強みは？」を巻き込まない）。
     private func isMeaningfulQuestion(_ q: String) -> Bool {
         if q.count < 4 { return false }
-        let backchannel: Set<String> = [
-            "はい", "ええ", "そうですね", "なるほど", "うん", "了解", "オーケー",
-            "はい。", "なるほど。", "そうですね。",
+        let core = q.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、…!！?？"))
+        let skip: Set<String> = [
+            "はい", "ええ", "うん", "そうですね", "なるほど", "なるほどですね",
+            "了解", "オーケー", "わかりました", "承知しました", "いいですね",
+            // 開始/終了の寒暄（単独で出たとき。本題が続けば settle で本題に連結される）
+            "よろしくお願いします", "よろしくお願いいたします",
+            "本日はよろしくお願いします", "それではよろしくお願いします",
+            "ありがとうございます", "ありがとうございました",
+            "お願いします", "失礼します", "失礼いたします",
         ]
-        return !backchannel.contains(q)
+        return !skip.contains(core)
     }
 
     private func startTurn(question: String) {
@@ -83,7 +134,9 @@ final class TurnManager: @unchecked Sendable {
         liveIsCommittedSource = false
         latency.turnStart(myEpoch)
 
-        model.answer = ""
+        // 前ターンの答えはここでは消さない。新しい答えの先頭文が確定するまで（runRouter / runLive の
+        // コミット点で上書き）画面に残し、考え中の一瞬だけ薄く表示する → 「答えが一度消える」体験を防ぐ。
+        // 失敗時のみ failTurn でクリアしてエラーを見せる。
         model.errorDetail = nil
         model.intentLabel = ""
         model.question = question   // show what STT heard, so a mis-hear is caught before reading aloud
@@ -224,6 +277,7 @@ final class TurnManager: @unchecked Sendable {
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
         guard myEpoch == epoch, committedEpoch != myEpoch else { return }
+        model.answer = ""        // 未コミット → 残っている前ターンの答えを消し、エラーを見せる
         model.status = .error
         model.message = .generationError
         model.errorDetail = error.localizedDescription

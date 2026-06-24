@@ -140,6 +140,8 @@ final class NotchView: NSView {
         let display = NotchPresentation.text(answer: model.answer, message: model.message,
                                              errorDetail: model.errorDetail, strings: s)
         answerLabel.attributedStringValue = NotchType.answerString(display, empty: model.answer.isEmpty)
+        // 新しいターンの考え中、まだ前の答えを表示している間は薄く見せて「次が来る」ことを示す。
+        answerLabel.alphaValue = (model.status == .thinking && !model.answer.isEmpty) ? 0.45 : 1
 
         // Drive the morph from the model's expand state.
         if model.expanded != wasExpanded {
