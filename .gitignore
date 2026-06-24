@@ -4,3 +4,7 @@
 knowledge/
 .env
 *.xcuserstate
+
+# 内部资料 — 不进公开仓库
+PLAN-MONETIZE.md
+docs/
