@@ -3,6 +3,8 @@
 日本就活向 · 实时面试提词器（macOS, native Swift）。监听面试官语音 → 日语 STT →
 简历/知识库喂 LLM → 可直接照念的日语回答 → **macOS 刘海（notch）**。设计见 [PLAN.md](PLAN.md)。
 
+> **许可：** [MIT](LICENSE)。客户端为 MIT 开源。
+
 ## 状态
 
 - **Phase 0–2 + Phase 3（部分）已打通可运行**：刘海 UI + 管线（音频 tap → 日语 STT → TurnManager → LLM → notch）、结构化事实 + 就活 prompt + 文系総合職、AnswerBank + Router（命中缓存/现场生成并行 commit）、状态栏面板 + 热键 + 暂停 + 一键删数据。

@@ -165,7 +165,16 @@ final class NotchController {
             collapseWork?.cancel()
             setExpanded(true)
         } else if !settingsMenuOpen {
-            scheduleCollapse(after: 0.6)
+            switch model.status {
+            case .thinking, .streaming, .presenting:
+                // 答えが出ている間はマウスが外れても引っ込めない。読み上げ中に勝手に消えるのを防ぐ。
+                // 次のターンで差し替わるか、録音停止で待機に戻ったときにだけ畳む。
+                collapseWork?.cancel()
+            case .error:
+                scheduleCollapse(after: 12)
+            case .listening, .ready:
+                scheduleCollapse(after: 0.6)
+            }
         }
     }
 
