@@ -37,12 +37,21 @@ final class TurnManager: @unchecked Sendable {
     // その間の final 群を 1 つの質問として確定する。
     private var pendingQ = ""
     private var settleWork: DispatchWorkItem?
-    /// 無音がこの長さ続いたら発話終了とみなす。FI_SETTLE_MS（ミリ秒）で上書き可。
+    /// 文が「。！？／…か」で終わっていれば、この静寂で確定（完了文＝即答えてよい）。
+    /// FI_SETTLE_MS（ミリ秒）で上書き可。
     private let settleWindow: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["FI_SETTLE_MS"], let v = Double(s), v >= 0 {
             return v / 1000
         }
         return 0.8
+    }()
+    /// 文が途中で切れているとき（述語なしの言い淀み「…なぜ」等）に待つ最大の静寂。実機ログでは
+    /// 面接官が ~1.0s 黙ってから本題を続けるので、短い窓だと割れる。FI_SETTLE_MAX_MS で上書き可。
+    private let settleWindowMax: TimeInterval = {
+        if let s = ProcessInfo.processInfo.environment["FI_SETTLE_MAX_MS"], let v = Double(s), v >= 0 {
+            return v / 1000
+        }
+        return 1.6
     }()
 
     var paused = false {
@@ -84,12 +93,22 @@ final class TurnManager: @unchecked Sendable {
         armSettle()
     }
 
-    /// (Re)arm the settle timer; every new final/interim pushes the commit out by `settleWindow`.
+    /// (Re)arm the settle timer; every new final/interim pushes the commit out. A complete-looking
+    /// utterance commits after `settleWindow`; one that trails off mid-clause waits `settleWindowMax`
+    /// so a hesitating interviewer (「…なぜ」→〔間〕→本題) lands as ONE turn instead of splitting.
     private func armSettle() {
         settleWork?.cancel()
+        let delay = looksComplete(pendingQ) ? settleWindow : settleWindowMax
         let work = DispatchWorkItem { [weak self] in self?.commitPending() }
         settleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + settleWindow, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Does the buffered utterance look like a finished question/sentence? 日本語は文末がはっきり
+    /// する（句点・疑問符・終助詞「か」）。途中で切れていれば未完とみなして長く待つ。
+    private func looksComplete(_ s: String) -> Bool {
+        guard let last = s.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
+        return "。．！？!?".contains(last) || last == "か"
     }
 
     private func cancelSettle() {
