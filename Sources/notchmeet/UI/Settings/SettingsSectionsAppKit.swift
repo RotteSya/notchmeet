@@ -340,6 +340,8 @@ final class AboutSection: SectionScroll {
             SKBuild.divider(),
             SKBuild.controlRow(s.aboutVersion, control: versionLabel),
             SKBuild.divider(),
+            UpdateRowView(),
+            SKBuild.divider(),
             SKBuild.controlRow(s.rerunOnboarding, control: rerunBtn),
             SKBuild.divider(),
         ])
@@ -347,6 +349,128 @@ final class AboutSection: SectionScroll {
         scroll.gap(22, after: tagline)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+// MARK: - Software update row
+
+/// The "software update" row in About: on demand it asks GitHub Releases whether a newer
+/// build exists, and offers a download link when one does. Self-contained — owns its network
+/// call and state, mirroring `KeyRowView`. Title sits left; a spinner / status / button
+/// cluster sits right and swaps with the check state.
+final class UpdateRowView: FlippedView {
+    private enum State {
+        case idle, checking, upToDate, failed
+        case available(version: String, url: URL)
+    }
+
+    private var s: AppStrings { AppStrings(language: AppLanguageStore.shared.language) }
+
+    private let titleLabel: NSTextField
+    private let statusLabel: NSTextField
+    private let spinner = NSProgressIndicator()
+    private let trailing = NSStackView()
+    private var checking = false
+
+    init() {
+        titleLabel = SKText.label("", font: SK.font(14, .semibold), color: SK.ink)
+        statusLabel = SKText.label("", font: SK.font(12.5), color: SK.secondary)
+        super.init(frame: .zero)
+        build()
+        render(.idle)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func build() {
+        titleLabel.stringValue = s.softwareUpdate
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = 10
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        addSubview(titleLabel)
+        addSubview(trailing)
+        NSLayoutConstraint.activate([
+            spinner.widthAnchor.constraint(equalToConstant: 16),
+            spinner.heightAnchor.constraint(equalToConstant: 16),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
+            trailing.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            trailing.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailing.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 16),
+        ])
+    }
+
+    private func render(_ state: State) {
+        trailing.arrangedSubviews.forEach { trailing.removeArrangedSubview($0); $0.removeFromSuperview() }
+        var views: [NSView] = []
+        switch state {
+        case .idle:
+            spinner.stopAnimation(nil)
+            views = [checkButton(s.checkForUpdates)]
+        case .checking:
+            spinner.startAnimation(nil)
+            statusLabel.stringValue = s.checkingForUpdates
+            statusLabel.textColor = SK.secondary
+            views = [spinner, statusLabel]
+        case .upToDate:
+            spinner.stopAnimation(nil)
+            statusLabel.stringValue = s.upToDate
+            statusLabel.textColor = SK.secondary
+            views = [statusLabel, checkButton(s.checkForUpdates)]
+        case .failed:
+            spinner.stopAnimation(nil)
+            statusLabel.stringValue = s.updateCheckFailed
+            statusLabel.textColor = SK.secondary
+            views = [statusLabel, checkButton(s.checkForUpdates)]
+        case .available(let version, let url):
+            spinner.stopAnimation(nil)
+            statusLabel.stringValue = s.updateAvailable(version)
+            statusLabel.textColor = SK.accent
+            let download = SKButton(s.downloadUpdate, systemImage: "arrow.down.circle.fill", kind: .primary) {
+                NSWorkspace.shared.open(url)
+            }
+            views = [statusLabel, download]
+        }
+        views.forEach { trailing.addArrangedSubview($0) }
+    }
+
+    private func checkButton(_ title: String) -> SKButton {
+        SKButton(title, kind: .secondary) { [weak self] in self?.startCheck() }
+    }
+
+    private func startCheck() {
+        guard !checking else { return }
+        checking = true
+        render(.checking)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.checking = false }
+            do {
+                switch try await UpdateChecker.check() {
+                case .upToDate: self.render(.upToDate)
+                case .updateAvailable(let r): self.render(.available(version: r.version, url: r.page))
+                }
+            } catch {
+                self.render(.failed)
+            }
+        }
+    }
 }
 
 // MARK: - Live dot

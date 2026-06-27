@@ -247,6 +247,18 @@ struct AppStrings {
         pick("日本就活向 · 实时面试提词器", "日本の就活向け・リアルタイム面接プロンプター")
     }
 
+    // MARK: Software update (checks GitHub Releases on demand)
+
+    var softwareUpdate: String { pick("软件更新", "ソフトウェア・アップデート") }
+    var checkForUpdates: String { pick("检查更新", "アップデートを確認") }
+    var checkingForUpdates: String { pick("正在检查…", "確認中…") }
+    var upToDate: String { pick("已是最新版本", "最新バージョンです") }
+    func updateAvailable(_ version: String) -> String {
+        pick("有新版本 v\(version)", "新バージョン v\(version)")
+    }
+    var downloadUpdate: String { pick("下载", "ダウンロード") }
+    var updateCheckFailed: String { pick("检查失败，请重试", "確認に失敗しました") }
+
     // MARK: Interview-script library
 
     var thisInterviewScript: String { pick("本次面试原稿", "今回の面接原稿") }
