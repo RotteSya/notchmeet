@@ -98,10 +98,10 @@ struct OBStrings {
     let demoQuestion, demoAnswer, intentTag, demoQFormat, verbatim: String
     let unitCount, skipped, permUnset: String
     // STEP 3 — connect services (API keys), and the readiness-aware「done」state.
-    let kKeys, hKeys, pKeys, keyDeepgramLabel, keyLLMLabel: String
-    let keyDeepgramPh, keyLLMPh, keyDeepgramHelp, keyLLMHelp, keyReplacePh: String
+    let kKeys, hKeys, pKeys, keyReplacePh: String
     let keyRequired, keyConnected, keyMissing, keyPrivacy, doneHpending: String
     let donePpending, sumDeepgramLabel, sumLLMLabel, btnFix, btnEnterAnyway: String
+    let keyCodeLabel, keyCodePh, keyCodeHelp: String   // STEP 3 — single activation-code entry
 
     static func of(_ lang: UILanguage) -> OBStrings { lang == .ja ? ja : zh }
 
@@ -134,17 +134,15 @@ struct OBStrings {
         demoAnswer: "私は、貴社の「ユーザー第一」という姿勢に強く共感しています。インターンで培ったデータ分析の経験を活かし、利用者の声を丁寧に捉えながらプロダクト改善に貢献したいと考えています。",
         intentTag: "志望動機", demoQFormat: "%@について教えてください。", verbatim: "日语原稿",
         unitCount: "个", skipped: "已跳过", permUnset: "未设置",
-        kKeys: "STEP 3 · 连接服务", hKeys: "连接语音识别与 AI",
-        pKeys: "NotchMeet 用你自己的 Key 工作：识别面试官语音用 Deepgram，生成回答用 AI。两者都需要。",
-        keyDeepgramLabel: "Deepgram · 语音识别", keyLLMLabel: "AI · 生成回答",
-        keyDeepgramPh: "粘贴 Deepgram API Key", keyLLMPh: "粘贴所选服务的 API Key",
-        keyDeepgramHelp: "在 deepgram.com 免费注册获取", keyLLMHelp: "Gemini 有免费额度，二选一即可",
+        kKeys: "STEP 3 · 连接服务", hKeys: "粘贴激活码即可使用",
+        pKeys: "粘贴我们提供的激活码，无需自己准备 API Key。自带 Key 的用户可在「设置」中手动填写。",
         keyReplacePh: "已连接 · 粘贴新 Key 可替换",
         keyRequired: "必填", keyConnected: "已连接", keyMissing: "待设置 · 必填",
         keyPrivacy: "Key 仅存于本机钥匙串，绝不上传服务器。",
         doneHpending: "还差最后一步", donePpending: "完成下面标记「待设置」的项目，就能开始使用。",
         sumDeepgramLabel: "语音识别 · Deepgram", sumLLMLabel: "回答生成 · AI",
-        btnFix: "去补齐设置", btnEnterAnyway: "仍然进入"
+        btnFix: "去补齐设置", btnEnterAnyway: "仍然进入",
+        keyCodeLabel: "激活码", keyCodePh: "粘贴激活码", keyCodeHelp: "试用码由我们提供 · 自带 Key 请在设置中填写"
     )
 
     static let ja = OBStrings(
@@ -176,17 +174,15 @@ struct OBStrings {
         demoAnswer: "私は、貴社の「ユーザー第一」という姿勢に強く共感しています。インターンで培ったデータ分析の経験を活かし、利用者の声を丁寧に捉えながらプロダクト改善に貢献したいと考えています。",
         intentTag: "志望動機", demoQFormat: "%@について教えてください。", verbatim: "原稿どおり",
         unitCount: "件", skipped: "スキップ", permUnset: "未設定",
-        kKeys: "STEP 3 / 接続", hKeys: "音声認識と AI に接続",
-        pKeys: "NotchMeet はあなたの API キーで動きます。面接官の音声認識に Deepgram、回答生成に AI を使います。どちらも必要です。",
-        keyDeepgramLabel: "Deepgram · 音声認識", keyLLMLabel: "AI · 回答生成",
-        keyDeepgramPh: "Deepgram API キーを貼り付け", keyLLMPh: "選んだサービスの API キーを貼り付け",
-        keyDeepgramHelp: "deepgram.com で無料登録して取得", keyLLMHelp: "Gemini は無料枠あり・どちらか一方でOK",
+        kKeys: "STEP 3 / 接続", hKeys: "コードを貼り付けるだけ",
+        pKeys: "お渡しするアクティベーションコードを貼り付けるだけ。API キーの用意は不要です。自分のキーを使う場合は設定から。",
         keyReplacePh: "接続済み · 新しいキーで置き換え可",
         keyRequired: "必須", keyConnected: "接続済み", keyMissing: "未設定 · 必須",
         keyPrivacy: "キーは端末の Keychain にのみ保存され、送信されません。",
         doneHpending: "あと一歩で完了", donePpending: "下の「未設定」の項目を整えると、すぐに使えます。",
         sumDeepgramLabel: "音声認識 · Deepgram", sumLLMLabel: "回答生成 · AI",
-        btnFix: "設定を完了する", btnEnterAnyway: "そのまま開始"
+        btnFix: "設定を完了する", btnEnterAnyway: "そのまま開始",
+        keyCodeLabel: "アクティベーションコード", keyCodePh: "コードを貼り付け", keyCodeHelp: "試用コードはこちらでお渡しします · 自分のキーは設定から"
     )
 }
 
@@ -229,11 +225,9 @@ struct OnboardingView: View {
     @State private var scriptText = ""
     @State private var permAttempted = false
     @State private var permGranted = false
-    @State private var deepgramKey = ""        // newly entered this session (empty = leave as-is)
-    @State private var llmKey = ""
+    @State private var setupCode = ""           // pasted activation code (nmk1.…); empty = leave as-is
     @State private var deepgramSet = false      // seeded from `keyPresent`, flipped on commit
     @State private var llmSet = false
-    @State private var llmName = "GEMINI_API_KEY"   // which provider a newly pasted LLM key targets
     @State private var demoPlayed = false
     @State private var demoPlaying = false
     @State private var demoResetWork: DispatchWorkItem?
@@ -246,12 +240,8 @@ struct OnboardingView: View {
 
     /// Each required service has a usable key: either one was already present (seeded from
     /// `keyPresent`) or the user just typed one (committed on Next/finish).
-    private var deepgramSatisfied: Bool {
-        deepgramSet || !deepgramKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-    private var llmSatisfied: Bool {
-        llmSet || !llmKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private var deepgramSatisfied: Bool { deepgramSet }
+    private var llmSatisfied: Bool { llmSet }
     /// The app can only actually work with audio permission AND both keys — the SAME predicate
     /// the live pipeline gates on (`Settings.apiKey`). Gating「准备就绪」on this is what makes
     /// the terminal state honest instead of an unconditional celebration.
@@ -529,10 +519,8 @@ struct OnboardingView: View {
             Text(t.pKeys).font(.system(size: 12.5)).lineSpacing(3).foregroundStyle(OB.ink.opacity(0.54)).padding(.top, 8)
 
             VStack(spacing: 11) {
-                keyRow(label: t.keyDeepgramLabel, set: deepgramSet, field: $deepgramKey,
-                       placeholder: t.keyDeepgramPh, helper: t.keyDeepgramHelp) { EmptyView() }
-                keyRow(label: t.keyLLMLabel, set: llmSet, field: $llmKey,
-                       placeholder: t.keyLLMPh, helper: t.keyLLMHelp) { llmPicker }
+                keyRow(label: t.keyCodeLabel, set: deepgramSet && llmSet, field: $setupCode,
+                       placeholder: t.keyCodePh, helper: t.keyCodeHelp) { EmptyView() }
             }
             .padding(.top, 16)
 
@@ -587,27 +575,6 @@ struct OnboardingView: View {
             .background(Capsule().fill(filled ? OB.accent.opacity(0.16) : Color.white.opacity(0.06)))
     }
 
-    /// Picks which provider a newly pasted LLM key is saved under (the pipeline accepts either).
-    private var llmPicker: some View {
-        HStack(spacing: 2) {
-            llmPickerPill("Gemini", "GEMINI_API_KEY")
-            llmPickerPill("Claude", "ANTHROPIC_API_KEY")
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.30)))
-    }
-
-    private func llmPickerPill(_ label: String, _ name: String) -> some View {
-        let on = llmName == name
-        return Button { withAnimation(OB.springSnappy) { llmName = name } } label: {
-            Text(label)
-                .font(.system(size: 10.5, weight: on ? .semibold : .medium))
-                .foregroundStyle(on ? OB.inkDeep : OB.ink.opacity(0.6))
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background { if on { RoundedRectangle(cornerRadius: 6, style: .continuous).fill(OB.accent) } }
-        }
-        .buttonStyle(.plain)
-    }
 
     // MARK: step 4 — demo (drives the REAL notch)
 
@@ -789,24 +756,17 @@ struct OnboardingView: View {
     /// through the step without typing never clears an existing key. Idempotent: called on the
     /// key step's Next and again on finish. Going live happens once, in the controller's finish.
     private func commitKeys() {
-        // A one-paste setup code (nmk1.…) carries the Deepgram + LLM key together, so a trial user
-        // pastes a single string instead of obtaining two API keys. Honoured in whichever field it
-        // lands in; a normal key (no prefix) falls through to the per-field path below unchanged.
-        for pasted in [deepgramKey, llmKey] {
-            guard let keys = SetupCode.decode(pasted) else { continue }
-            for (name, value) in keys {
-                let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !v.isEmpty else { continue }
-                saveKey(name, v)
-                if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true; llmName = name }
-            }
-            deepgramKey = ""; llmKey = ""
-            return
+        // Onboarding takes a single activation code (nmk1.…) that carries the Deepgram + LLM key,
+        // so a trial user pastes one string instead of obtaining two API keys. BYO users enter raw
+        // keys in Settings instead. A non-code paste decodes to nil and is ignored here.
+        guard let keys = SetupCode.decode(setupCode) else { return }
+        for (name, value) in keys {
+            let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !v.isEmpty else { continue }
+            saveKey(name, v)
+            if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true }
         }
-        let dg = deepgramKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !dg.isEmpty { saveKey("DEEPGRAM_API_KEY", dg); deepgramSet = true; deepgramKey = "" }
-        let lm = llmKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !lm.isEmpty { saveKey(llmName, lm); llmSet = true; llmKey = "" }
+        setupCode = ""
     }
 
     /// From the「还差一步」done state, jump to the first requirement that isn't met.
