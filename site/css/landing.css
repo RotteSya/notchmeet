@@ -1,0 +1,109 @@
+/* notchmeet — landing page styles.
+ * Page-level rules, keyframes, the notch transitions, nav underline, and the convex
+ * periwinkle "key" buttons (ported from the DS React <Button variant="primary">).
+ */
+
+html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+body { margin: 0; background: #06070b; overflow-x: hidden; }
+
+#nm-page {
+  position: relative;
+  background: #06070b;
+  color: var(--nm-ink);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* ---- keyframes ---- */
+@keyframes nm-float { 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-7px); } }
+@keyframes nm-caret-blink { 0%,48%{ opacity:1; } 52%,100%{ opacity:0; } }
+@keyframes nm-sweep { 0%{ transform: translateX(-130%) skewX(-18deg); } 100%{ transform: translateX(260%) skewX(-18deg); } }
+@keyframes jw-breathe { 0%,100%{ transform:scale(0.86); opacity:0.74; } 50%{ transform:scale(1.14); opacity:1; } }
+@keyframes jw-breathe-live { 0%,100%{ transform:scale(0.78); opacity:0.7; } 50%{ transform:scale(1.3); opacity:1; } }
+@keyframes jw-spin { to { transform: rotate(360deg); } }
+@keyframes jw-eq1 { 0%,100%{ height:4px; } 50%{ height:12px; } }
+@keyframes jw-eq2 { 0%,100%{ height:10px; } 50%{ height:4px; } }
+@keyframes jw-eq3 { 0%,100%{ height:6px; } 50%{ height:11px; } }
+@keyframes tv-wave { 0%,100%{ transform:scaleY(0.35); } 50%{ transform:scaleY(1); } }
+@keyframes tv-sheen { 0%{ transform:translateX(-45%) skewX(-14deg); opacity:0; } 12%{ opacity:1; } 55%,100%{ transform:translateX(150%) skewX(-14deg); opacity:0; } }
+@keyframes ring-pulse { 0%,100%{ transform:scale(1); opacity:0.85; } 50%{ transform:scale(1.07); opacity:0.45; } }
+@keyframes nm-bob-soft { 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-5px); } }
+
+/* ---- nav underline ---- */
+.nm-navlink { position:relative; }
+.nm-navlink::after { content:""; position:absolute; left:0; right:100%; bottom:-4px; height:1.5px; background:var(--nm-accent); border-radius:1px; transition: right .3s cubic-bezier(0.22,0.90,0.24,1); }
+.nm-navlink:hover { color: var(--nm-ink) !important; }
+.nm-navlink:hover::after { right:0; }
+
+/* ---- the notch ---- */
+#nm-notch { transition: width 0.42s cubic-bezier(0.22,0.90,0.24,1), border-radius 0.42s cubic-bezier(0.22,0.90,0.24,1), box-shadow 0.42s cubic-bezier(0.22,0.90,0.24,1), border-color 0.42s ease; }
+#nm-notch-body { transition: max-height 0.42s cubic-bezier(0.22,0.90,0.24,1), opacity 0.18s ease; }
+@media (prefers-reduced-motion: reduce){ #nm-notch, #nm-notch-body { transition:none; } }
+
+/* ---- responsive pricing grid ---- */
+@media (max-width: 768px){ #nm-plans { grid-template-columns:1fr !important; } }
+
+/* ============================================================ BUTTONS
+ * Ported from the DS React <Button>. Primary = a convex periwinkle key:
+ * top-sheen→body fill, a white top-edge hairline, a grounded colored shadow.
+ * Hover brightens +5%; press shrinks to 97%.
+ */
+.nm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+  letter-spacing: var(--tracking-cta);
+  border: 0.75px solid transparent;
+  border-radius: var(--radius-xl);
+  cursor: pointer;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: var(--transition-control);
+}
+.nm-btn:active { transform: scale(var(--press-scale)); }
+
+.nm-btn--primary {
+  color: var(--text-on-accent);
+  font-weight: var(--weight-semibold);
+  background-image: var(--grad-key);
+  border-image: var(--grad-edge-key) 1;
+  box-shadow: var(--shadow-key);
+}
+.nm-btn--primary:hover {
+  filter: brightness(var(--hover-brighten));
+  box-shadow: var(--shadow-key-hover);
+}
+
+/* sizes (match the DS Button pads) */
+.nm-btn--sm { padding: 5px 12px; font-size: 12px; height: 30px; }
+.nm-btn--lg { padding: 12px 26px; font-size: 15px; height: 46px; }
+
+.nm-btn i[data-lucide] { width: 1em; height: 1em; display: inline-flex; }
+
+/* The big finale / waitlist keys carry the once-per-3.6s sweep + their own padding. */
+.nm-key {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: var(--radius-xl);
+  background-image: var(--grad-key);
+  border: 0.75px solid transparent;
+  border-image: var(--grad-edge-key) 1;
+  box-shadow: var(--shadow-key);
+  color: var(--text-on-accent);
+  font-family: var(--font-sans);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-cta);
+  cursor: pointer;
+  text-decoration: none;
+  transition: var(--transition-control);
+}
+.nm-key:hover { filter: brightness(var(--hover-brighten)); box-shadow: var(--shadow-key-hover); }
+.nm-key:active { transform: scale(var(--press-scale)); }

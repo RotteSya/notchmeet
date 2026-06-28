@@ -1,0 +1,269 @@
+/* notchmeet — design system (consolidated)
+ * Tokens + material/helper classes, lifted verbatim from the notchmeet design system
+ * (_ds/notchmeet-design-system). Obsidian + edge-of-light: near-black surfaces, a single
+ * periwinkle accent, machined-glass materials, the anti-banding dither.
+ *
+ * Source order preserved: colors → typography → spacing → motion → materials → base.
+ */
+
+/* ============================================================ COLORS */
+:root {
+  /* ---- Surfaces (the obsidian) ---- */
+  --nm-black: #000000;          /* the notch seam: pure black so it fuses with the hardware notch */
+  --nm-bg: #06070b;             /* app background — deep near-black with a breath of blue */
+  --nm-bg-raise: #0c0e16;       /* a hair lifted, for stacked planes */
+  --nm-surface: rgba(255, 255, 255, 0.052); /* hairline-glass fill (secondary controls at rest) */
+  --nm-surface-hover: rgba(255, 255, 255, 0.095);
+  --nm-well: rgba(255, 255, 255, 0.045);     /* recessed input well */
+
+  /* ---- Brand periwinkle ---- */
+  --nm-accent: #7da2ff;         /* the brand */
+  --nm-accent-hi: #a3beff;      /* top sheen of a convex accent key */
+  --nm-accent-lo: #5878e8;      /* grounded edge + colored shadow */
+  --nm-accent-notch: #78a0ff;   /* the notch's slightly cooler accent variant */
+  --nm-sheen: #ccdbff;          /* cool near-white — the colour of screen-light on glass */
+
+  /* ---- Ink (text on dark) ---- */
+  --nm-ink: #f5f6fb;            /* primary text */
+  --nm-ink-96: rgba(255, 255, 255, 0.96);
+  --nm-ink-secondary: rgba(255, 255, 255, 0.60);
+  --nm-ink-tertiary: rgba(255, 255, 255, 0.34);
+  --nm-ink-deep: #0b0e18;       /* text/icon ON an accent key */
+
+  /* ---- Semantic ---- */
+  --nm-recording: #ff453a;      /* the unmistakable record red (notch ring) */
+  --nm-destructive: #ff4f45;    /* destructive actions (settings) */
+  --nm-warning: #ff9f1e;        /* warnings / attention */
+
+  /* ---- Hairlines + rules ---- */
+  --nm-rule: rgba(255, 255, 255, 0.10);
+  --nm-hairline: rgba(255, 255, 255, 0.09);
+  --nm-edge-hi: rgba(255, 255, 255, 0.70); /* top-edge specular highlight (light from above) */
+  --nm-edge-lo: rgba(255, 255, 255, 0.05); /* the rule fading into the dark below */
+
+  /* ---- Semantic aliases (use these in components) ---- */
+  --text-primary: var(--nm-ink);
+  --text-secondary: var(--nm-ink-secondary);
+  --text-tertiary: var(--nm-ink-tertiary);
+  --text-on-accent: var(--nm-ink-deep);
+  --text-accent: var(--nm-accent);
+
+  --surface-page: var(--nm-bg);
+  --surface-card: var(--nm-surface);
+  --surface-card-hover: var(--nm-surface-hover);
+  --surface-input: var(--nm-well);
+
+  --border-hairline: var(--nm-hairline);
+  --border-rule: var(--nm-rule);
+  --border-focus: rgba(125, 162, 255, 0.85);
+
+  --accent: var(--nm-accent);
+  --accent-strong: var(--nm-accent-lo);
+}
+
+/* ============================================================ TYPOGRAPHY */
+:root {
+  /* ---- Families ---- */
+  /* The brand IS the Apple system face (SF Pro). Rendered via the native -apple-system /
+   * system-ui stack rather than a webfont, so there is intentionally no @font-face. */
+  --font-sans: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+
+  /* ---- Weights ---- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Sizes ---- */
+  --text-kicker: 11px;     /* uppercase section label, tracked */
+  --text-caption: 12px;    /* helper text, metadata */
+  --text-control: 12.5px;  /* button + control labels */
+  --text-body: 13px;       /* default body / settings rows */
+  --text-read: 15px;       /* the notch answer — the one real reading size */
+  --text-title: 17px;      /* settings section titles */
+  --text-display: 22px;    /* onboarding headlines */
+  --text-display-lg: 28px; /* hero headline */
+
+  /* ---- Line heights ---- */
+  --leading-tight: 1.1;
+  --leading-snug: 1.25;
+  --leading-body: 1.45;
+  --leading-relaxed: 1.55;
+
+  /* ---- Tracking ---- */
+  --tracking-kicker: 1.5px;
+  --tracking-tight: -0.01em;
+  --tracking-cta: 0.2px;
+  --tracking-normal: 0;
+}
+
+/* ============================================================ SPACING & RADII */
+:root {
+  /* ---- Spacing scale ---- */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 11px;
+  --space-6: 14px;
+  --space-7: 18px;
+  --space-8: 22px;
+  --space-9: 28px;
+  --space-10: 36px;
+  --space-12: 48px;
+
+  /* ---- Corner radii (all continuous / squircle in spirit) ---- */
+  --radius-xs: 6px;
+  --radius-sm: 7px;
+  --radius-md: 8px;
+  --radius-lg: 9px;
+  --radius-xl: 11px;
+  --radius-card: 14px;
+  --radius-pill: 999px;
+  --icon-corner-ratio: 0.235;
+
+  /* ---- Control sizing ---- */
+  --control-h-sm: 24px;
+  --control-h-md: 30px;
+  --control-h-lg: 34px;
+  --hit-min: 28px;
+
+  /* ---- Notch geometry ---- */
+  --notch-collapsed-w: 220px;
+  --notch-collapsed-h: 32px;
+  --notch-top-radius: 8px;
+  --notch-bottom-radius: 11px;
+  --notch-shadow-margin-h: 22px;
+  --notch-shadow-margin-b: 28px;
+
+  /* ---- Reading width ---- */
+  --read-max: 720px;
+}
+
+/* ============================================================ MOTION */
+:root {
+  /* ---- Durations ---- */
+  --motion-morph: 0.42s;
+  --motion-morph-fast: 0.40s;
+  --motion-content: 0.18s;
+  --motion-control: 0.14s;
+  --motion-sheen: 3.6s;
+
+  /* ---- Easing ---- */
+  --ease-settle: cubic-bezier(0.22, 0.90, 0.24, 1.0);
+  --ease-out-cubic: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.2, 0.64, 1);
+  --ease-spring-snappy: cubic-bezier(0.33, 1.15, 0.68, 1);
+
+  /* ---- Convenience transitions ---- */
+  --transition-control: transform var(--motion-control) var(--ease-spring-snappy),
+    background-color var(--motion-control) var(--ease-out-cubic),
+    border-color var(--motion-control) var(--ease-out-cubic),
+    box-shadow var(--motion-control) var(--ease-out-cubic),
+    filter var(--motion-control) var(--ease-out-cubic);
+  --transition-morph: all var(--motion-morph) var(--ease-settle);
+
+  /* ---- Press / hover deltas ---- */
+  --press-scale: 0.97;
+  --press-scale-tight: 0.94;
+  --hover-brighten: 1.05;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-morph: 0.001s;
+    --motion-morph-fast: 0.001s;
+    --motion-content: 0.001s;
+    --motion-control: 0.001s;
+  }
+}
+
+/* ============================================================ MATERIALS */
+:root {
+  /* ---- Drop shadows ---- */
+  --shadow-card: 0 14px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.28);
+  --shadow-notch: 0 9px 16px rgba(0, 0, 0, 0.55), 0 2px 5px rgba(0, 0, 0, 0.38);
+  --shadow-control: 0 1px 3px rgba(0, 0, 0, 0.22);
+  --shadow-key: 0 5px 10px rgba(88, 120, 232, 0.42), 0 1px 1px rgba(0, 0, 0, 0.25);
+  --shadow-key-hover: 0 7px 14px rgba(88, 120, 232, 0.55), 0 1px 1px rgba(0, 0, 0, 0.25);
+  --shadow-focus: 0 0 0 3px rgba(125, 162, 255, 0.18);
+
+  /* ---- Edge & sheen gradients ---- */
+  --grad-key: linear-gradient(to bottom, var(--nm-accent-hi), var(--nm-accent));
+  --grad-edge-key: linear-gradient(to bottom,
+    rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0) 50%, rgba(88, 120, 232, 0.55) 100%);
+  --grad-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+  --grad-edge-glass: linear-gradient(to bottom, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05));
+
+  /* ---- The dither tile ---- */
+  --dither-tile: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='96' height='96' filter='url(%23n)'/></svg>");
+  --dither-opacity: 0.022;
+}
+
+/* ---- Reusable material classes ---- */
+
+/* A floating obsidian glass card: dark fill, top sheen, hairline that brightens up top,
+ * grounded layered shadow. Add .nm-card--flat to drop the elevation. */
+.nm-card {
+  position: relative;
+  background-color: rgba(0, 0, 0, 0.22);
+  background-image: var(--grad-sheen);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  border: 0.75px solid transparent;
+  border-image: var(--grad-edge-glass) 1;
+}
+.nm-card--flat { box-shadow: none; }
+
+/* The additive dither overlay — drop inside any surface to kill banding. */
+.nm-dither::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--dither-tile);
+  background-repeat: repeat;
+  mix-blend-mode: plus-lighter;
+  opacity: var(--dither-opacity);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* The "Living Metal" aurora backdrop in CSS — used as a graceful fallback if WebGL is absent. */
+.nm-aurora {
+  position: relative;
+  background-color: var(--nm-bg);
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(125, 162, 255, 0.22), transparent 60%),
+    radial-gradient(90% 70% at 12% 8%, rgba(88, 120, 232, 0.20), transparent 55%),
+    radial-gradient(80% 90% at 88% 30%, rgba(99, 130, 220, 0.14), transparent 60%),
+    radial-gradient(100% 100% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 55%);
+}
+
+/* ============================================================ BASE */
+* { box-sizing: border-box; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  color: var(--text-primary);
+  background-color: var(--surface-page);
+  font-weight: var(--weight-regular);
+}
+
+/* Tabular, mono for anything technical (keys, latency, counts). */
+.nm-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+::selection { background: rgba(125, 162, 255, 0.28); }
