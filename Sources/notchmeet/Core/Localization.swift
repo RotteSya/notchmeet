@@ -153,8 +153,8 @@ struct AppStrings {
 
     func apiKeyTitle(_ provider: String) -> String { "\(provider) API Key" }
     var apiKeyPrompt: String {
-        pick("输入 Key；留空并保存将删除。Key 会安全存入 macOS 钥匙串。",
-             "キーを入力してください。空欄で保存すると削除され、Keychain に保管されます。")
+        pick("输入各自的 Key，或在任一栏粘贴激活码一次填好；留空并保存将删除。Key 会安全存入 macOS 钥匙串。",
+             "各キーを入力するか、いずれかの欄にコードを貼り付けて一括設定できます。空欄で保存すると削除され、Keychain に保管されます。")
     }
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }

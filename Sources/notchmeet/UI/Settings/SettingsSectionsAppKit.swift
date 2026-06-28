@@ -51,19 +51,28 @@ final class GeneralSection: SectionScroll {
 // MARK: - API keys
 
 final class KeysSection: SectionScroll {
+    private var keyRows: [KeyRowView] = []
     init(onKeysChanged: @escaping () -> Void) {
         super.init(frame: .zero)
         let s = self.s
         let title = SKBuild.pageTitle(s.apiKeySettings)
         let help = SKBuild.help(s.apiKeyPrompt)
+        let rows = [
+            KeyRowView(label: s.speechRecognitionProvider, name: "DEEPGRAM_API_KEY", onChanged: onKeysChanged),
+            KeyRowView(label: "Gemini", name: "GEMINI_API_KEY", onChanged: onKeysChanged),
+            KeyRowView(label: "Anthropic (Claude)", name: "ANTHROPIC_API_KEY", onChanged: onKeysChanged),
+        ]
+        keyRows = rows
+        // A setup code (nmk1.…) pasted into any field fills every key at once — refresh all rows then.
+        for row in rows { row.onCodeApplied = { [weak self] in self?.keyRows.forEach { $0.refreshFromStore() } } }
         scroll.setRows([
             title,
             SKBuild.divider(),
-            KeyRowView(label: s.speechRecognitionProvider, name: "DEEPGRAM_API_KEY", onChanged: onKeysChanged),
+            rows[0],
             SKBuild.divider(),
-            KeyRowView(label: "Gemini", name: "GEMINI_API_KEY", onChanged: onKeysChanged),
+            rows[1],
             SKBuild.divider(),
-            KeyRowView(label: "Anthropic (Claude)", name: "ANTHROPIC_API_KEY", onChanged: onKeysChanged),
+            rows[2],
             SKBuild.divider(),
             help,
         ])
@@ -78,6 +87,8 @@ final class KeyRowView: FlippedView {
     private let label: String
     private let name: String
     private let onChanged: () -> Void
+    /// Called after a pasted setup code writes every key, so the section can refresh sibling rows.
+    var onCodeApplied: (() -> Void)?
 
     private let status = NSImageView()
     private var field: SKField!
@@ -174,12 +185,35 @@ final class KeyRowView: FlippedView {
 
     private func save() {
         let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A pasted activation code (nmk1.…) carries every key at once: apply them all and let the
+        // section refresh the sibling rows, instead of saving this single field.
+        if let keys = SetupCode.decode(trimmed) {
+            for (n, v) in keys {
+                let val = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !val.isEmpty { Secrets.set(n, val) }
+            }
+            field.stringValue = ""
+            onChanged()
+            onCodeApplied?()
+            return
+        }
         if trimmed.isEmpty { Secrets.delete(name) } else { Secrets.set(name, trimmed) }
         let was = isSet
         isSet = !trimmed.isEmpty
         refreshStatus(bounce: isSet && !was)
         refreshButtons()
         onChanged()
+    }
+
+    /// Re-read this row's key from the Keychain and update its field, status, and buttons. Used by
+    /// the section to refresh every row after a setup code fills several keys at once.
+    func refreshFromStore() {
+        let current = Secrets.get(name) ?? ""
+        let was = isSet
+        isSet = !current.isEmpty
+        field.stringValue = current
+        refreshStatus(bounce: isSet && !was)
+        refreshButtons()
     }
 
     private func clear() {
