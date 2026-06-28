@@ -789,6 +789,20 @@ struct OnboardingView: View {
     /// through the step without typing never clears an existing key. Idempotent: called on the
     /// key step's Next and again on finish. Going live happens once, in the controller's finish.
     private func commitKeys() {
+        // A one-paste setup code (nmk1.…) carries the Deepgram + LLM key together, so a trial user
+        // pastes a single string instead of obtaining two API keys. Honoured in whichever field it
+        // lands in; a normal key (no prefix) falls through to the per-field path below unchanged.
+        for pasted in [deepgramKey, llmKey] {
+            guard let keys = SetupCode.decode(pasted) else { continue }
+            for (name, value) in keys {
+                let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !v.isEmpty else { continue }
+                saveKey(name, v)
+                if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true; llmName = name }
+            }
+            deepgramKey = ""; llmKey = ""
+            return
+        }
         let dg = deepgramKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !dg.isEmpty { saveKey("DEEPGRAM_API_KEY", dg); deepgramSet = true; deepgramKey = "" }
         let lm = llmKey.trimmingCharacters(in: .whitespacesAndNewlines)
