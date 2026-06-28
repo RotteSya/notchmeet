@@ -1,0 +1,15 @@
+/* notchmeet design system — global entry point.
+ * Consumers link THIS file. It is a manifest of @imports only; every token, material, and
+ * font reachable from here ships to consumers.
+ *
+ * Brand: an obsidian + edge-of-light language for notchmeet — a macOS notch-resident,
+ * real-time interview prompter for Japanese job-hunting (就活). Periwinkle accent, system
+ * typeface, machined-glass surfaces.
+ */
+
+@import "tokens/colors.css";
+@import "tokens/typography.css";
+@import "tokens/spacing.css";
+@import "tokens/motion.css";
+@import "tokens/materials.css";
+@import "tokens/base.css";

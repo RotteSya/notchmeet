@@ -1,0 +1,59 @@
+/* notchmeet — Color tokens
+ * "Obsidian + a single crisp edge of light." Surfaces are near-black; the brand is a
+ * periwinkle that reads as cool screen-light on glass. Lifted verbatim from the macOS app
+ * (NotchPalette / OB / SK). Hex values are sRGB.
+ */
+
+:root {
+  /* ---- Surfaces (the obsidian) ---- */
+  --nm-black: #000000;          /* the notch seam: pure black so it fuses with the hardware notch */
+  --nm-bg: #06070b;             /* app background — deep near-black with a breath of blue */
+  --nm-bg-raise: #0c0e16;       /* a hair lifted, for stacked planes */
+  --nm-surface: rgba(255, 255, 255, 0.052); /* hairline-glass fill (secondary controls at rest) */
+  --nm-surface-hover: rgba(255, 255, 255, 0.095);
+  --nm-well: rgba(255, 255, 255, 0.045);     /* recessed input well */
+
+  /* ---- Brand periwinkle ---- */
+  --nm-accent: #7da2ff;         /* the brand */
+  --nm-accent-hi: #a3beff;      /* top sheen of a convex accent key */
+  --nm-accent-lo: #5878e8;      /* grounded edge + colored shadow */
+  --nm-accent-notch: #78a0ff;   /* the notch's slightly cooler accent variant */
+  --nm-sheen: #ccdbff;          /* cool near-white — the colour of screen-light on glass */
+
+  /* ---- Ink (text on dark) ---- */
+  --nm-ink: #f5f6fb;            /* primary text */
+  --nm-ink-96: rgba(255, 255, 255, 0.96);
+  --nm-ink-secondary: rgba(255, 255, 255, 0.60);
+  --nm-ink-tertiary: rgba(255, 255, 255, 0.34);
+  --nm-ink-deep: #0b0e18;       /* text/icon ON an accent key */
+
+  /* ---- Semantic ---- */
+  --nm-recording: #ff453a;      /* the unmistakable record red (notch ring) */
+  --nm-destructive: #ff4f45;    /* destructive actions (settings) */
+  --nm-warning: #ff9f1e;        /* warnings / attention */
+
+  /* ---- Hairlines + rules ---- */
+  --nm-rule: rgba(255, 255, 255, 0.10);
+  --nm-hairline: rgba(255, 255, 255, 0.09);
+  --nm-edge-hi: rgba(255, 255, 255, 0.70); /* top-edge specular highlight (light from above) */
+  --nm-edge-lo: rgba(255, 255, 255, 0.05); /* the rule fading into the dark below */
+
+  /* ---- Semantic aliases (use these in components) ---- */
+  --text-primary: var(--nm-ink);
+  --text-secondary: var(--nm-ink-secondary);
+  --text-tertiary: var(--nm-ink-tertiary);
+  --text-on-accent: var(--nm-ink-deep);
+  --text-accent: var(--nm-accent);
+
+  --surface-page: var(--nm-bg);
+  --surface-card: var(--nm-surface);
+  --surface-card-hover: var(--nm-surface-hover);
+  --surface-input: var(--nm-well);
+
+  --border-hairline: var(--nm-hairline);
+  --border-rule: var(--nm-rule);
+  --border-focus: rgba(125, 162, 255, 0.85);
+
+  --accent: var(--nm-accent);
+  --accent-strong: var(--nm-accent-lo);
+}

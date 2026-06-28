@@ -1,0 +1,33 @@
+/* notchmeet — Base resets & document defaults.
+ * The product lives on dark obsidian; consumers get sensible dark defaults out of the box.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  color: var(--text-primary);
+  background-color: var(--surface-page);
+  font-weight: var(--weight-regular);
+}
+
+/* Tabular, mono for anything technical (keys, latency, counts). */
+.nm-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+::selection {
+  background: rgba(125, 162, 255, 0.28);
+}
