@@ -9,8 +9,9 @@
  *
  * ─────────────────────────────────────────────────────────────────────────────
  *  CONFIG — drop in real values here.
- *  • DOWNLOAD_URL: the macOS app download (e.g. a signed .dmg). "#" keeps the
- *    final CTA as a scroll-to-top placeholder.
+ *  • GITHUB_REPO: "owner/name" whose GitHub Releases host the macOS app. The
+ *    download buttons resolve its latest .dmg at load and fall back to the
+ *    hard-coded href in index.html if the Releases API is unreachable.
  *  • WAITLIST_ENDPOINT: a URL that accepts POST {mode, contact}. null keeps the
  *    waitlist local-only (saved to localStorage, with the success state).
  * ─────────────────────────────────────────────────────────────────────────────
@@ -19,7 +20,7 @@
   "use strict";
 
   var CONFIG = {
-    DOWNLOAD_URL: "#",          // TODO: real macOS download URL
+    GITHUB_REPO: "RotteSya/notchmeet", // download buttons auto-resolve this repo's latest .dmg
     WAITLIST_ENDPOINT: null,    // TODO: real waitlist POST endpoint
     AURORA_INTENSITY: 1,        // 0.4–1.0 — master brightness of the aurora
     DEMO_AUTOPLAY: true,        // false = notch holds a single presented answer (calm mode)
@@ -347,14 +348,25 @@
   // ──────────────────────────── bootstrap ──────────────────────────────
 
   function wireDownload() {
-    var btn = $("nm-download-final");
-    if (!btn) return;
-    if (CONFIG.DOWNLOAD_URL && CONFIG.DOWNLOAD_URL !== "#") {
-      btn.setAttribute("href", CONFIG.DOWNLOAD_URL);
-      btn.setAttribute("download", "");
-    } else {
-      btn.setAttribute("href", "#top"); // placeholder: scroll to top until a real URL is set
-    }
+    var btns = document.querySelectorAll("[data-download]");
+    if (!btns.length || !CONFIG.GITHUB_REPO) return;
+
+    // Each button already carries a hard-coded .dmg href (the no-JS / API-down
+    // fallback). Upgrade them to whatever the latest GitHub Release ships, so a
+    // new app version goes live without editing this page.
+    fetch("https://api.github.com/repos/" + CONFIG.GITHUB_REPO + "/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" }
+    }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (rel) {
+      var dmg = rel && rel.assets && rel.assets.filter(function (a) {
+        return /\.dmg$/i.test(a.name);
+      })[0];
+      if (!dmg) return;
+      Array.prototype.forEach.call(btns, function (b) {
+        b.setAttribute("href", dmg.browser_download_url);
+      });
+    }).catch(function () { /* keep the fallback href */ });
   }
 
   function init() {
