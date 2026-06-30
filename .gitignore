@@ -1,10 +1,14 @@
 .build/
 *.app
 .DS_Store
-knowledge/
+/knowledge/
 .env
 *.xcuserstate
 
 # 内部资料 — 不进公开仓库
 PLAN-MONETIZE.md
 docs/
+
+# 闭源引擎层：放在独立的私有仓库，故意不纳入本公开仓库。
+# 本地开发：把私有库 clone 到 Sources/notchmeet/Knowledge/ 再编译。
+Sources/notchmeet/Knowledge/
