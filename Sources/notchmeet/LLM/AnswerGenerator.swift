@@ -4,7 +4,7 @@ import Foundation
 struct GenRequest {
     let question: String
     let context: String   // structured-fact / resume grounding (Phase 1)
-    let history: String   // conversation context for 深掘り (Phase 3)
+    let history: String   // recent Q + prior *suggested* answers for 深掘り dedup; not verbatim candidate speech
 }
 
 /// Streams a natural, speakable answer as text deltas. Cancellation is via the surrounding Task

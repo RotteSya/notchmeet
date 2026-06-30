@@ -176,13 +176,15 @@ final class TurnManager: @unchecked Sendable {
         // script are NOT sent to the cloud LLM (answers become generic).
         currentQuestion = question
         var ctx = ""
+        var hist = ""
         if Settings.sendContextToLLM {
             ctx = knowledge.context(for: question)
             if let script = scriptStore?.contextBlock(), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
+            hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
         }
-        let req = GenRequest(question: question, context: ctx, history: historyText())
+        let req = GenRequest(question: question, context: ctx, history: hist)
         liveTask = Task { [weak self] in
             await self?.runLive(req, myEpoch: myEpoch)
         }
@@ -285,13 +287,15 @@ final class TurnManager: @unchecked Sendable {
 
     private func recordHistory() {
         guard !currentQuestion.isEmpty else { return }
-        history.append((q: currentQuestion, a: String(model.answer.prefix(200))))
-        if history.count > 4 { history.removeFirst(history.count - 4) }
+        history.append((q: currentQuestion, a: String(model.answer.prefix(300))))
+        if history.count > 6 { history.removeFirst(history.count - 6) }
     }
 
     private func historyText() -> String {
         guard !history.isEmpty else { return "" }
-        return history.suffix(3).map { "Q: \($0.q)\nA: \($0.a)" }.joined(separator: "\n")
+        // Labels mark provenance honestly: 面接官 is what STT actually heard; 回答案 is the answer
+        // WE suggested last turn — not necessarily what the candidate said (the app never hears them).
+        return history.suffix(4).map { "面接官: \($0.q)\n回答案: \($0.a)" }.joined(separator: "\n\n")
     }
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
