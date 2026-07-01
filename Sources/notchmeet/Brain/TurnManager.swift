@@ -31,27 +31,50 @@ final class TurnManager: @unchecked Sendable {
     private var currentQuestion = ""
     private var history: [(q: String, a: String)] = []   // 深掘り context
 
-    // Utterance coalescing (§6). 日本人面接官は「よろしくお願いします。まず自己紹介を…」のように
-    // 寒暄＋本題を一続きで話す。Deepgram は句点ごとに final を返すため、本題を待たずに前半だけで
-    // 答えてしまっていた。final が来てもすぐターンを起こさず、`settleWindow` の静寂が続いて初めて
-    // その間の final 群を 1 つの質問として確定する。
+    // Utterance coalescing (§6). 面接官は一続きの発話で「意見の表明・前置き＋本題」を話す：
+    //   「なるほど、〜だと思います。」〔思考の間〕「その点、どうお考えですか？」
+    // Deepgram は句点ごとに final を返すので、前半（表明）だけで答えると本題を取りこぼし、回答が
+    // 本題とズレて割れる。実機で報告された「発表の想法と質問を2題に割る」症状はこれ。対策は2段構え：
+    //   (1) 確定待ちの窓を発話の種類で変える。完結した質問・依頼（…か／？／…ください）は即答して
+    //       よいので短い窓、ただの意見表明（…です／…と思います。）は本題がまだ続く可能性が高いので
+    //       長い窓で待ち、本題を同じターンに畳み込む（looksLikeCompletedPrompt）。
+    //   (2) それでも間が空いて表明だけ確定してしまった場合の保険＝リコール・マージ：直後(mergeGrace)に
+    //       本題が来たら、そのターンを開き直して〔表明＋本題〕を1問として答え直す（armMerge）。
     private var pendingQ = ""
     private var settleWork: DispatchWorkItem?
-    /// 文が「。！？／…か」で終わっていれば、この静寂で確定（完了文＝即答えてよい）。
-    /// FI_SETTLE_MS（ミリ秒）で上書き可。
+    /// 完了した質問・依頼（…か／？／…ください）だけ、この短い静寂で確定＝即答する。実面接の端末内
+    /// 計測では質問の途中に入る息継ぎは 0.5〜0.8s なので、0.8s ならそれを跨がずに最速で出せる。
+    /// ただの陳述文はここでは確定しない（settleWindowMax を使う）。FI_SETTLE_MS（ミリ秒）で上書き可。
     private let settleWindow: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["FI_SETTLE_MS"], let v = Double(s), v >= 0 {
             return v / 1000
         }
         return 0.8
     }()
-    /// 文が途中で切れているとき（述語なしの言い淀み「…なぜ」等）に待つ最大の静寂。実機ログでは
-    /// 面接官が ~1.0s 黙ってから本題を続けるので、短い窓だと割れる。FI_SETTLE_MAX_MS で上書き可。
+    /// 静寂の最大待ち。意見表明・前置きの後に本題が続くケースや、途中で切れた言い淀み（「…なぜ」）で使う。
+    /// 実測（2026-07-01 の実面接を端末内で文字起こしして計測）：面接官の「前置き/意見 → 本題」の間は
+    /// 概ね 0.7〜1.4s。余裕を見て 1.8s とし、これを超える尾はリコール・マージ（mergeGrace）が拾う。
+    /// 本番は面接官チャンネルのみ聞くため、本当の話者交代は候補者の発話ぶん数秒以上空く＝早すぎる確定の心配なし。
+    /// FI_SETTLE_MAX_MS（ミリ秒）で上書き可。
     private let settleWindowMax: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["FI_SETTLE_MAX_MS"], let v = Double(s), v >= 0 {
             return v / 1000
         }
-        return 1.6
+        return 1.8
+    }()
+
+    // Recall-merge net (§6, layer 2). A commit that was only a *statement* (setup, not a question or
+    // request) very likely precedes the real question. If a meaningful final lands within `mergeGrace`
+    // of such a commit, fold it back into that turn so the answer sees the whole question instead of
+    // the tail stripped of its setup. FI_MERGE_GRACE_MS (ms) overrides.
+    private var mergeArmed = false
+    private var mergeWork: DispatchWorkItem?
+    private var lastCommittedQ = ""
+    private let mergeGrace: TimeInterval = {
+        if let s = ProcessInfo.processInfo.environment["FI_MERGE_GRACE_MS"], let v = Double(s), v >= 0 {
+            return v / 1000
+        }
+        return 2.5
     }()
 
     var paused = false {
@@ -89,30 +112,56 @@ final class TurnManager: @unchecked Sendable {
         }
         // S2: see exactly what the interviewer's speech was recognized as (+confidence).
         if sttDebug { NSLog("[stt] final(%.2f): %@", t.confidence, q) }
+        // Layer 2 (recall-merge): the previous turn committed only a statement (setup) and the
+        // interviewer has continued within the grace window → reopen that turn so the answer sees the
+        // whole question, not just the tail. startTurn (fired by settle below) then supersedes the
+        // stale generation via the epoch bump, and we drop the premature setup-only history entry.
+        if mergeArmed, pendingQ.isEmpty {
+            disarmMerge()
+            pendingQ = lastCommittedQ
+            if history.last?.q == lastCommittedQ { history.removeLast() }
+            NSLog("[turn] merge-recall: folding follow-up into prior setup")
+        }
         pendingQ = pendingQ.isEmpty ? q : pendingQ + " " + q
         armSettle()
     }
 
-    /// (Re)arm the settle timer; every new final/interim pushes the commit out. A complete-looking
-    /// utterance commits after `settleWindow`; one that trails off mid-clause waits `settleWindowMax`
-    /// so a hesitating interviewer (「…なぜ」→〔間〕→本題) lands as ONE turn instead of splitting.
+    /// (Re)arm the settle timer; every new final/interim pushes the commit out. A completed question
+    /// or request commits after the short `settleWindow`; a bare statement (or a clause that trails
+    /// off) waits `settleWindowMax`, so an interviewer who states a view before the real question
+    /// (「…と思います。」→〔思考の間〕→本題) lands as ONE turn instead of splitting.
     private func armSettle() {
         settleWork?.cancel()
-        let delay = looksComplete(pendingQ) ? settleWindow : settleWindowMax
+        let delay = looksLikeCompletedPrompt(pendingQ) ? settleWindow : settleWindowMax
         let work = DispatchWorkItem { [weak self] in self?.commitPending() }
         settleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// Does the buffered utterance look like a finished question/sentence? 日本語は文末がはっきり
-    /// する（句点・疑問符・終助詞「か」）。途中で切れていれば未完とみなして長く待つ。
-    private func looksComplete(_ s: String) -> Bool {
-        guard let last = s.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
-        return "。．！？!?".contains(last) || last == "か"
+    /// Has the interviewer actually FINISHED and handed the floor over — i.e. is this a complete
+    /// question (…か／？) or a direct request (…ください／お願いします)? Those get the short window
+    /// (answer promptly). A bare declarative statement (…です／…と思います。) is NOT a hand-off: an
+    /// interviewer who just stated a view is almost always still building toward the real question,
+    /// so it gets the long window and we fold the question into the same turn. This distinction —
+    /// "sentence-complete" ≠ "turn-complete" — is the core of the over-splitting fix.
+    private func looksLikeCompletedPrompt(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = t.last else { return false }
+        if "？?".contains(last) { return true }                    // explicit question mark
+        // strip trailing sentence punctuation, then inspect the real ending
+        let core = t.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、…!！?？"))
+        guard let c = core.last else { return false }
+        if c == "か" { return true }                               // …ですか／…ましたか／…でしょうか
+        // direct requests / imperatives that ARE a prompt to answer now
+        for tail in ["ください", "下さい", "お願いします", "お願いいたします"] {
+            if core.hasSuffix(tail) { return true }
+        }
+        return false
     }
 
     private func cancelSettle() {
         settleWork?.cancel(); settleWork = nil; pendingQ = ""
+        disarmMerge()   // a pause/stop ends the turn — never merge across it
     }
 
     /// Silence held for `settleWindow` → the interviewer finished. Commit the coalesced finals
@@ -123,7 +172,25 @@ final class TurnManager: @unchecked Sendable {
         pendingQ = ""
         guard !q.isEmpty, !paused else { return }
         NSLog("[stt] Q: %@", q)
+        // Arm the recall-merge net only when committing a *statement*: a question that lands right
+        // after should fold back in (layer 2). A completed question/request needs no net.
+        lastCommittedQ = q
+        if looksLikeCompletedPrompt(q) { disarmMerge() } else { armMerge() }
         startTurn(question: q)
+    }
+
+    /// Hold the "just committed a statement" window open for `mergeGrace`; a follow-up final inside
+    /// it is treated as the real question and folded back (see `handleTranscript`).
+    private func armMerge() {
+        mergeWork?.cancel()
+        mergeArmed = true
+        let work = DispatchWorkItem { [weak self] in self?.mergeArmed = false; self?.mergeWork = nil }
+        mergeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + mergeGrace, execute: work)
+    }
+
+    private func disarmMerge() {
+        mergeWork?.cancel(); mergeWork = nil; mergeArmed = false
     }
 
     /// Backchannel / greeting / too-short filter so 「なるほど」 や単独の「よろしくお願いします」 が
