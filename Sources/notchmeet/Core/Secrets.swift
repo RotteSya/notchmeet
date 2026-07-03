@@ -14,7 +14,10 @@ enum Secrets {
         SecItemDelete(base as CFDictionary)
         var add = base
         add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status != errSecSuccess {
+            NSLog("[secrets] keychain save FAILED for %@ (OSStatus %d)", key, status)
+        }
     }
 
     static func get(_ key: String) -> String? {
@@ -37,6 +40,9 @@ enum Secrets {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
-        SecItemDelete(q as CFDictionary)
+        let status = SecItemDelete(q as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            NSLog("[secrets] keychain delete FAILED for %@ (OSStatus %d)", key, status)
+        }
     }
 }

@@ -14,6 +14,7 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else { throw LLMError.badURL }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
+        r.timeoutInterval = 15   // idle timeout — resets whenever a streamed byte arrives
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

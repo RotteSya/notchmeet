@@ -14,7 +14,12 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     private lazy var session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     private var keepAlive: Timer?
     private var started = false
-    private(set) var isConnected = false
+    // Written on the URLSession delegate queue and main; read on the CoreAudio IO
+    // thread (write(_:)) — must be lock-protected.
+    private let stateLock = NSLock()
+    private var _isConnected = false
+    var isConnected: Bool { stateLock.lock(); defer { stateLock.unlock() }; return _isConnected }
+    private func setConnected(_ v: Bool) { stateLock.lock(); _isConnected = v; stateLock.unlock() }
     private var reconnectDelay: TimeInterval = 0.5
     private var pendingFinal = ""
     private var lastConf = 0.0
@@ -27,11 +32,11 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
 
     func setLanguage(_ lang: String) { language = lang }
 
-    func start() throws { started = true; isConnected = false; connect() }
+    func start() throws { started = true; setConnected(false); connect() }
 
     func stop() {
         started = false
-        isConnected = false
+        setConnected(false)
         keepAlive?.invalidate(); keepAlive = nil
         task?.cancel(with: .goingAway, reason: nil); task = nil
     }
@@ -86,7 +91,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             guard let self else { return }
             switch result {
             case .failure(let err):
-                self.isConnected = false
+                self.setConnected(false)
                 // If we initiated the teardown (stop() cancels the socket), the resulting
                 // ENOTCONN is expected — don't surface it as an error or try to reconnect.
                 guard self.started else { return }
@@ -146,7 +151,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
 
     private func scheduleReconnect() {
         guard started else { return }
-        isConnected = false
+        setConnected(false)
         pendingFinal = ""                            // drop a stale partial across the gap
         let delay = reconnectDelay
         reconnectDelay = min(reconnectDelay * 2, 5)  // fast recovery — this is a live interview
@@ -160,7 +165,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol protocol: String?) {
         reconnectDelay = 0.5
-        isConnected = true
+        setConnected(true)
         NSLog("[deepgram] connected (%@)", language)
     }
 }

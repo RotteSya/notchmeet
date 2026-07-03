@@ -11,12 +11,14 @@ final class GeminiAnswerGenerator: AnswerGenerator {
     }
 
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
-        let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse&key=\(apiKey)"
+        let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse"
         guard let url = URL(string: urlStr) else { throw LLMError.badURL }
 
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
+        r.timeoutInterval = 15   // idle timeout — resets whenever a streamed byte arrives
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")   // key in header, never in URL (logs/proxies)
         let body: [String: Any] = [
             "systemInstruction": ["parts": [["text": Prompts.system(context: req.context)]]],
             "contents": [["role": "user", "parts": [["text": Prompts.user(question: req.question, history: req.history)]]]],

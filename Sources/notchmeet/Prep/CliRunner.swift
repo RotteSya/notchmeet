@@ -17,6 +17,14 @@ enum CliError: Error, LocalizedError {
     }
 }
 
+/// Thread-safe holder so onCancel (arbitrary thread) can reach the running Process.
+private final class ProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var proc: Process?
+    func set(_ p: Process) { lock.lock(); proc = p; lock.unlock() }
+    func terminate() { lock.lock(); let p = proc; lock.unlock(); p?.terminate() }
+}
+
 /// Detects + runs local agent CLIs (claude / codex) for OFFLINE pre-generation only
 /// (never on the realtime path — PLAN §5). General text interface (no image binding),
 /// per-call isolated temp dir, real cancellation via the surrounding Task.
@@ -88,6 +96,7 @@ enum CliRunner {
         let wd = workDir()
         defer { try? FileManager.default.removeItem(atPath: wd) }
 
+        let box = ProcessBox()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
                 let p = Process()
@@ -95,6 +104,7 @@ enum CliRunner {
                 p.arguments = args
                 p.environment = augmentedEnv()
                 p.currentDirectoryURL = URL(fileURLWithPath: wd)
+                box.set(p)
                 let o = Pipe(); let e = Pipe()
                 p.standardOutput = o; p.standardError = e
                 p.standardInput = FileHandle.nullDevice
@@ -110,8 +120,7 @@ enum CliRunner {
                 do { try p.run() } catch { cont.resume(throwing: error) }
             }
         } onCancel: {
-            // best-effort: the process is killed when the continuation's Process deinits;
-            // explicit kill would need to capture the Process — left as a follow-up.
+            box.terminate()   // termination fires the handler → continuation resumes with .failed
         }
     }
 }

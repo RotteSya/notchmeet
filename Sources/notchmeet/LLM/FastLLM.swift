@@ -6,14 +6,16 @@ enum FastLLM {
     static func complete(system: String, user: String, maxTokens: Int = 600) async throws -> String {
         if let k = Settings.apiKey("GEMINI_API_KEY") { return try await gemini(k, system, user, maxTokens) }
         if let k = Settings.apiKey("ANTHROPIC_API_KEY") { return try await claude(k, system, user, maxTokens) }
-        throw LLMError.badURL
+        throw LLMError.missingKey
     }
 
     private static func gemini(_ key: String, _ sys: String, _ user: String, _ maxT: Int) async throws -> String {
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\(key)") else { throw LLMError.badURL }
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent") else { throw LLMError.badURL }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
+        r.timeoutInterval = 15   // router/prep are latency-bound; default 60s breaks the 3s SLA story
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(key, forHTTPHeaderField: "x-goog-api-key")   // key in header, never in URL (logs/proxies)
         let body: [String: Any] = [
             "systemInstruction": ["parts": [["text": sys]]],
             "contents": [["role": "user", "parts": [["text": user]]]],
@@ -34,6 +36,7 @@ enum FastLLM {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else { throw LLMError.badURL }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
+        r.timeoutInterval = 15   // router/prep are latency-bound; default 60s breaks the 3s SLA story
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue(key, forHTTPHeaderField: "x-api-key")
         r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

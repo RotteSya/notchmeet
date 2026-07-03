@@ -2,11 +2,13 @@ import Foundation
 
 enum LLMError: Error, LocalizedError {
     case badURL
+    case missingKey
     case http(Int)
 
     var errorDescription: String? {
         switch self {
         case .badURL: return "bad URL"
+        case .missingKey: return "no API key configured"
         case .http(let code): return "HTTP \(code)"
         }
     }
