@@ -12,12 +12,6 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
 
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else { throw LLMError.badURL }
-        var r = URLRequest(url: url)
-        r.httpMethod = "POST"
-        r.timeoutInterval = 15   // idle timeout — resets whenever a streamed byte arrives
-        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 512,
@@ -25,17 +19,11 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
             "system": Prompts.system(context: req.context),
             "messages": [["role": "user", "content": Prompts.user(question: req.question, history: req.history)]],
         ]
-        r.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (bytes, resp) = try await URLSession.shared.bytes(for: r)
-        try httpCheck(resp)
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            guard line.hasPrefix("data:") else { continue }
-            let json = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            if json.isEmpty { continue }
-            if let t = Self.delta(json), !t.isEmpty { onDelta(t) }
-        }
+        let request = try LLMHTTP.post(url, headers: [
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+        ], body: body)
+        try await LLMHTTP.streamSSE(request, extract: Self.delta, onDelta: onDelta)
     }
 
     private static func delta(_ json: String) -> String? {

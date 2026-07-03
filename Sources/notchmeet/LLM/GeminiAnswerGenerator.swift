@@ -13,12 +13,6 @@ final class GeminiAnswerGenerator: AnswerGenerator {
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
         let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse"
         guard let url = URL(string: urlStr) else { throw LLMError.badURL }
-
-        var r = URLRequest(url: url)
-        r.httpMethod = "POST"
-        r.timeoutInterval = 15   // idle timeout — resets whenever a streamed byte arrives
-        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")   // key in header, never in URL (logs/proxies)
         let body: [String: Any] = [
             "systemInstruction": ["parts": [["text": Prompts.system(context: req.context)]]],
             "contents": [["role": "user", "parts": [["text": Prompts.user(question: req.question, history: req.history)]]]],
@@ -26,17 +20,8 @@ final class GeminiAnswerGenerator: AnswerGenerator {
             "generationConfig": ["temperature": 0.5, "maxOutputTokens": 512,
                                  "thinkingConfig": ["thinkingBudget": 0]],
         ]
-        r.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (bytes, resp) = try await URLSession.shared.bytes(for: r)
-        try httpCheck(resp)
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            guard line.hasPrefix("data:") else { continue }
-            let json = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            if json.isEmpty || json == "[DONE]" { continue }
-            if let text = Self.text(json), !text.isEmpty { onDelta(text) }
-        }
+        let request = try LLMHTTP.post(url, headers: ["x-goog-api-key": apiKey], body: body)
+        try await LLMHTTP.streamSSE(request, extract: Self.text, onDelta: onDelta)
     }
 
     private static func text(_ json: String) -> String? {
