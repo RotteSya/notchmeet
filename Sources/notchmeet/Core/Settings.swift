@@ -57,4 +57,15 @@ enum Settings {
     static func cleanupLegacyKeys() {
         UserDefaults.standard.removeObject(forKey: "nm_interview_mode")  // 文系/技术 模式开关（已移除）
     }
+
+    /// 离线判断用户是否很可能在中国大陆（无网络调用）。时区优先——命中"人在国内、
+    /// 系统 Region 设成日本"（就活用户常见）；Region==CN 兜底。参数可注入，便于测试。
+    static func isLikelyInChina(timeZone: TimeZone = .current, locale: Locale = .current) -> Bool {
+        let chinaZones: Set<String> = [
+            "Asia/Shanghai", "Asia/Urumqi", "Asia/Chongqing", "Asia/Harbin",
+        ]
+        if chinaZones.contains(timeZone.identifier) { return true }
+        if locale.region?.identifier == "CN" { return true }
+        return false
+    }
 }
