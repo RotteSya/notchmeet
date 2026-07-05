@@ -23,6 +23,7 @@ enum RuntimeMessage: Equatable {
     case bankGenerating
     case startupError
     case generationError
+    case sttError
 }
 
 enum CaptureHealthState {
@@ -90,6 +91,7 @@ struct AppStrings {
         case .bankGenerating: return pick("正在预生成回答…", "回答を事前生成中…")
         case .startupError: return pick("启动失败", "起動エラー")
         case .generationError: return pick("回答生成失败", "回答生成エラー")
+        case .sttError: return pick("语音识别不可用", "音声認識が利用できません")
         }
     }
 
@@ -105,7 +107,7 @@ struct AppStrings {
         case .apiKeyMissing: return pick("需要设置 API Key", "APIキーが必要です")
         case .autoStopped: return pick("已自动停止", "自動停止しました")
         case .bankGenerating: return pick("准备回答中", "回答を準備中")
-        case .startupError, .generationError: return pick("需要处理", "確認が必要です")
+        case .startupError, .generationError, .sttError: return pick("需要处理", "確認が必要です")
         }
     }
 

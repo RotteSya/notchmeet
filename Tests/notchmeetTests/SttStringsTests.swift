@@ -11,4 +11,8 @@ final class SttStringsTests: XCTestCase {
         XCTAssertTrue(AppStrings(language: .zh).sttLocalUnavailable.contains("本地日语识别不可用"))
         XCTAssertTrue(AppStrings(language: .ja).sttNotAuthorized.contains("音声認識"))
     }
+    func testSttErrorRuntimeMessageLocalized() {
+        XCTAssertEqual(AppStrings(language: .zh).runtimeMessage(.sttError), "语音识别不可用")
+        XCTAssertEqual(AppStrings(language: .ja).runtimeMessage(.sttError), "音声認識が利用できません")
+    }
 }

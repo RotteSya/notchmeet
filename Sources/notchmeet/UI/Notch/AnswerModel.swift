@@ -31,6 +31,7 @@ enum NotchPresentation {
         if message == .generationError, let errorDetail {
             return strings.generationError(errorDetail)
         }
+        if message == .sttError, let errorDetail { return errorDetail }  // SttError.localizedDescription is a full localized sentence
         return strings.runtimeMessage(message)
     }
 }

@@ -443,7 +443,18 @@ final class AppController {
             if !t.text.isEmpty { self?.inactivity.noteActivity() } // interviewer was heard
             DispatchQueue.main.async { tm?.handleTranscript(t) }
         }
-        sttc.onError = { err in NSLog("[stt] error: %@", String(describing: err)) }
+        sttc.onError = { [weak self] err in
+            NSLog("[stt] error: %@", String(describing: err))
+            // Only terminal on-device errors (auth denied / no ja model) surface to the user;
+            // Deepgram's transient socket errors auto-retry and stay log-only (no error-flashing).
+            guard err is SttError else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.notch.model.status = .error
+                self.notch.model.message = .sttError
+                self.notch.model.errorDetail = err.localizedDescription
+            }
+        }
 
         let capture = AudioCaptureFactory.make()
         capture.onPCM = { [weak sttc] pcm in sttc?.write(pcm) }
