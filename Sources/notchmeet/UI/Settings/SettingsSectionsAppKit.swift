@@ -57,6 +57,17 @@ final class KeysSection: SectionScroll {
         let s = self.s
         let title = SKBuild.pageTitle(s.apiKeySettings)
         let help = SKBuild.help(s.apiKeyPrompt)
+
+        // STT 引擎三段选择器：切换后持久化并触发 reloadPipeline（重建 STT 客户端，无需重启）。
+        let engines: [SttEngine] = [.auto, .deepgram, .apple]
+        let seg = SKSegmented(titles: [s.sttEngineAuto, s.sttEngineDeepgram, s.sttEngineApple],
+                              selected: engines.firstIndex(of: Settings.sttEngine) ?? 0) { idx in
+            Settings.sttEngine = engines[idx]
+            onKeysChanged()
+        }
+        constrain(seg, width: 270, height: 30)
+        let engineRow = SKBuild.stackedControl(s.sttEngineLabel, control: seg, help: s.sttEngineHelp)
+
         let rows = [
             KeyRowView(label: s.speechRecognitionProvider, name: "DEEPGRAM_API_KEY", onChanged: onKeysChanged),
             KeyRowView(label: "Gemini", name: "GEMINI_API_KEY", onChanged: onKeysChanged),
@@ -67,6 +78,8 @@ final class KeysSection: SectionScroll {
         for row in rows { row.onCodeApplied = { [weak self] in self?.keyRows.forEach { $0.refreshFromStore() } } }
         scroll.setRows([
             title,
+            SKBuild.divider(),
+            engineRow,
             SKBuild.divider(),
             rows[0],
             SKBuild.divider(),
