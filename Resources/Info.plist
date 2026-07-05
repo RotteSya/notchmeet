@@ -26,5 +26,7 @@
 	<string>面接官の音声を文字起こしするために、システム音声をキャプチャします。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>面接官の音声をリアルタイムで文字起こしするために、システム音声の録音を使用します。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>面接官の音声をオフラインで文字起こしするために音声認識を使用します（音声は端末外に送信されません）。/ 用于离线转写面试官语音（音频不会离开本机）。</string>
 </dict>
 </plist>
