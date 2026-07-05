@@ -106,10 +106,12 @@ final class AppController {
         case .live:
             armLive()
         case .auto:
-            if Settings.apiKey("DEEPGRAM_API_KEY") != nil {
+            // Arm live iff a real STT engine resolves (Apple on-device needs no key; Deepgram
+            // needs a key). Only sit idle when neither is available (would be Mock).
+            if ProviderRegistry.sttResolution() != .mock {
                 armLive()
             } else {
-                idleNoKey() // no key → sit idle (no mock loop)
+                idleNoKey() // no usable STT engine → sit idle (no mock loop)
             }
         }
         NSLog("[app] pipeline (re)loaded")

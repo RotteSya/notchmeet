@@ -16,11 +16,16 @@ enum ProviderRegistry {
         return MockAnswerGenerator()
     }
 
+    /// The STT engine the app WILL use, given pref (incl. FI_STT_ENGINE), region, and key.
+    /// Single source of truth shared by `makeStt()` and the launch gate so they never disagree.
+    static func sttResolution() -> SttResolution {
+        Settings.resolveStt(pref: sttEnginePreference(),
+                            inChina: Settings.isLikelyInChina(),
+                            hasDeepgramKey: Settings.apiKey("DEEPGRAM_API_KEY") != nil)
+    }
+
     static func makeStt() -> SttClient {
-        let pref = sttEnginePreference()
-        let inChina = Settings.isLikelyInChina()
-        let hasDeepgram = Settings.apiKey("DEEPGRAM_API_KEY") != nil
-        switch Settings.resolveStt(pref: pref, inChina: inChina, hasDeepgramKey: hasDeepgram) {
+        switch sttResolution() {
         case .apple:
             NSLog("[provider] STT = Apple on-device (ja-JP)")
             return AppleSpeechSttClient()
