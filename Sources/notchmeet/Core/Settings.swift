@@ -1,5 +1,19 @@
 import Foundation
 
+/// 用户选择的 STT 引擎。`auto` 由 `Settings.resolveStt` 结合地区/Key 决定实际引擎。
+enum SttEngine: String, CaseIterable {
+    case auto
+    case deepgram
+    case apple
+}
+
+/// `makeStt` 实际应实例化的客户端。
+enum SttResolution: Equatable {
+    case apple
+    case deepgram
+    case mock
+}
+
 /// Runtime settings + key resolution. Keys come from Keychain first, then env (dev).
 enum Settings {
     /// The product currently supports Japanese interviews. This is deliberately
@@ -41,6 +55,28 @@ enum Settings {
         set {
             if let v = newValue, !v.isEmpty { UserDefaults.standard.set(v, forKey: "nm_capture_bundle_id") }
             else { UserDefaults.standard.removeObject(forKey: "nm_capture_bundle_id") }
+        }
+    }
+
+    /// STT 引擎偏好（UI 三段选择器）。默认 `auto`。
+    static var sttEngine: SttEngine {
+        get { SttEngine(rawValue: UserDefaults.standard.string(forKey: "nm_stt_engine") ?? "") ?? .auto }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "nm_stt_engine") }
+    }
+
+    /// 纯选择逻辑（无副作用，便于测试）：
+    /// - `.apple` → 总是 Apple 本地（无需任何 Key）。
+    /// - `.deepgram` → 有 Key 用 Deepgram，否则 Mock。
+    /// - `.auto` → 国内用 Apple；否则有 Key 用 Deepgram，再否则 Mock。
+    static func resolveStt(pref: SttEngine, inChina: Bool, hasDeepgramKey: Bool) -> SttResolution {
+        switch pref {
+        case .apple:
+            return .apple
+        case .deepgram:
+            return hasDeepgramKey ? .deepgram : .mock
+        case .auto:
+            if inChina { return .apple }
+            return hasDeepgramKey ? .deepgram : .mock
         }
     }
 
