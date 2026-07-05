@@ -140,6 +140,25 @@ struct AppStrings {
     var quit: String { pick("退出", "終了") }
     var speechRecognitionProvider: String { pick("Deepgram（语音识别）", "Deepgram（音声認識）") }
 
+    // MARK: STT 引擎选择
+    var sttEngineLabel: String { pick("语音识别引擎", "音声認識エンジン") }
+    var sttEngineHelp: String {
+        pick("国内网络下推荐「Apple 本地」：离线日语识别，无需联网、无需 Deepgram Key。",
+             "中国本土のネットワークでは「Apple（オンデバイス）」を推奨：オフライン日本語認識で、通信も Deepgram キーも不要です。")
+    }
+    var sttEngineAuto: String { pick("自动", "自動") }
+    var sttEngineDeepgram: String { pick("Deepgram 云端", "Deepgram（クラウド）") }
+    var sttEngineApple: String { pick("Apple 本地（离线）", "Apple（オンデバイス）") }
+
+    var sttLocalUnavailable: String {
+        pick("本地日语识别不可用：请在 系统设置 → 键盘 → 听写 中启用日语后重试。",
+             "オンデバイス日本語認識が利用できません：システム設定 → キーボード → 音声入力 で日本語を有効化してから再試行してください。")
+    }
+    var sttNotAuthorized: String {
+        pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 notchmeet。",
+             "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で notchmeet を許可してください。")
+    }
+
     func captureHealth(_ state: CaptureHealthState) -> String {
         switch state {
         case .notStarted: return pick("待机中（未录音）", "待機中（未録音）")
