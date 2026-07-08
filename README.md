@@ -16,7 +16,7 @@
   → 日语 STT（Deepgram，流式 interim + final；国内自动切 Apple 端侧离线识别）
   → TurnManager（判停 · 取消 · epoch）
   → Router（命中预生成答案 / 导入原稿，或现场生成）
-  → LLM（Gemini / Claude；国内优先 DeepSeek / 通义千问，可直连）
+  → LLM（Gemini / Claude；国内优先 通义千问 / DeepSeek，可直连）
   → 刘海に表示（原稿に沿った日语回答）
 ```
 
@@ -67,7 +67,7 @@ scripts/dmg.sh           # 出 release：签名 .dmg 到 .build/（版本取自 
 「设置 → API Key」分别填，存进 Keychain：
 - `DEEPGRAM_API_KEY`（日语流式 STT；国内网络默认走 Apple 端侧识别，可不填）
 - `GEMINI_API_KEY` 或 `ANTHROPIC_API_KEY`（答案生成）
-- `DEEPSEEK_API_KEY` 或 `DASHSCOPE_API_KEY`（通义千问）——**国内网络必填其一**：Gemini/Claude 在大陆不可直连，App 检测到国内环境会自动优先使用可直连的域内服务
+- `DASHSCOPE_API_KEY`（通义千问，国内推荐——TTFT 稳定）或 `DEEPSEEK_API_KEY`——**国内网络必填其一**：Gemini/Claude 在大陆不可直连，App 检测到国内环境会自动优先使用可直连的域内服务
 
 也可用同名环境变量兜底，或手动改 `AppConfig.pipeline = .live`。
 

@@ -175,8 +175,8 @@ struct AppStrings {
     func apiKeyTitle(_ provider: String) -> String { "\(provider) API Key" }
     var qwenProvider: String { pick("通义千问（DashScope）", "通義千問（DashScope）") }
     var llmChinaHint: String {
-        pick("国内网络无法直连 Gemini／Claude：请配置 DeepSeek 或通义千问 Key，App 会自动优先使用可直连的服务。",
-             "中国本土のネットワークでは Gemini／Claude に直接接続できません。DeepSeek または通義千問のキーを設定すると、自動的に優先して使用されます。")
+        pick("国内网络无法直连 Gemini／Claude：请配置通义千问（推荐，出字更快）或 DeepSeek Key，App 会自动优先使用可直连的服务。",
+             "中国本土のネットワークでは Gemini／Claude に直接接続できません。通義千問（推奨・応答が速い）または DeepSeek のキーを設定すると、自動的に優先して使用されます。")
     }
     var apiKeyPrompt: String {
         pick("输入各自的 Key，或在任一栏粘贴激活码一次填好；留空并保存将删除。Key 会安全存入 macOS 钥匙串。",

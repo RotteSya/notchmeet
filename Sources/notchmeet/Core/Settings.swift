@@ -90,13 +90,16 @@ enum Settings {
         }
     }
 
-    /// 按地区排序的 LLM 选择（无副作用）：国内优先可直连的域内服务（DeepSeek → Qwen）——
+    /// 按地区排序的 LLM 选择（无副作用）：国内优先可直连的域内服务（Qwen → DeepSeek）——
     /// Gemini/Claude 端点在大陆不可直连，只作垫底（用户可能自备代理）；境外维持原有
     /// Gemini → Claude 优先，域内服务作补充。
+    /// 域内先 Qwen：DeepSeek 官方 API 的首 token 延迟第三方实测常态数秒级
+    /// （aimultiple 2026 基准：Q&A 首 token 7–8s），对「3s 内出首句」是硬风险；
+    /// 千问 DashScope 走阿里云域内节点，同级模型 TTFT 亚秒级。
     static func resolveLLM(hasGemini: Bool, hasClaude: Bool,
                            hasDeepSeek: Bool, hasQwen: Bool,
                            inChina: Bool) -> LLMResolution {
-        let domestic: [LLMResolution?] = [hasDeepSeek ? .deepseek : nil, hasQwen ? .qwen : nil]
+        let domestic: [LLMResolution?] = [hasQwen ? .qwen : nil, hasDeepSeek ? .deepseek : nil]
         let global: [LLMResolution?] = [hasGemini ? .gemini : nil, hasClaude ? .claude : nil]
         let order = (inChina ? domestic + global : global + domestic).compactMap { $0 }
         return order.first ?? .none

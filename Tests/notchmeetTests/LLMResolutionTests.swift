@@ -9,10 +9,10 @@ final class LLMResolutionTests: XCTestCase {
     func testChinaPrefersDomesticOverGlobalKeys() {
         XCTAssertEqual(Settings.resolveLLM(hasGemini: true, hasClaude: true,
                                            hasDeepSeek: true, hasQwen: true, inChina: true),
-                       .deepseek, "国内且有域内 key → 必须选可直连的 DeepSeek，而不是被墙的 Gemini")
+                       .qwen, "国内双域内 key → 选 TTFT 稳定的千问（DeepSeek 官方 API 首 token 常态数秒，3s 预算扛不住）")
         XCTAssertEqual(Settings.resolveLLM(hasGemini: true, hasClaude: false,
-                                           hasDeepSeek: false, hasQwen: true, inChina: true),
-                       .qwen)
+                                           hasDeepSeek: true, hasQwen: false, inChina: true),
+                       .deepseek, "只有 DeepSeek key 时仍然用它——可直连总好过被墙")
     }
 
     func testChinaFallsBackToGlobalKeysWhenNoDomesticKey() {
@@ -29,6 +29,9 @@ final class LLMResolutionTests: XCTestCase {
         XCTAssertEqual(Settings.resolveLLM(hasGemini: false, hasClaude: true,
                                            hasDeepSeek: true, hasQwen: false, inChina: false),
                        .claude)
+        XCTAssertEqual(Settings.resolveLLM(hasGemini: false, hasClaude: false,
+                                           hasDeepSeek: true, hasQwen: true, inChina: false),
+                       .qwen, "域内档内部同样千问在前")
     }
 
     func testAbroadUsesDomesticKeyWhenItIsTheOnlyOne() {
