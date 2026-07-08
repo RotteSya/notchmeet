@@ -130,12 +130,30 @@ final class TurnManager: @unchecked Sendable {
     /// or request commits after the short `settleWindow`; a bare statement (or a clause that trails
     /// off) waits `settleWindowMax`, so an interviewer who states a view before the real question
     /// (「…と思います。」→〔思考の間〕→本題) lands as ONE turn instead of splitting.
+    /// The window is defined as silence measured FROM THE LAST PHONEME — the STT engine already
+    /// consumed part of it before its final arrived (Apple 端点器 ~0.7s、Deepgram endpointing 0.3s)，
+    /// so that banked silence is credited instead of waited twice (§4 预算里最大的一块固定浪费).
     private func armSettle() {
         settleWork?.cancel()
-        let delay = looksLikeCompletedPrompt(pendingQ) ? settleWindow : settleWindowMax
+        let window = looksLikeCompletedPrompt(pendingQ) ? settleWindow : settleWindowMax
+        let delay = max(0, window - bankedSilence())
         let work = DispatchWorkItem { [weak self] in self?.commitPending() }
         settleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Silence already elapsed since the audio path's last speech-level frame (`voicedClock`,
+    /// same source as the §4 T0). Trusted only when fresh (≤5s): a missing/mock audio path (0),
+    /// a future stamp, or a stale one degrades to the old wait-the-full-window behavior. The
+    /// clock's VAD is MORE sensitive than the STT endpointer's (peak 300 vs RMS 0.012), so the
+    /// credit only ever under-counts silence — never commits earlier than the window intends.
+    private func bankedSilence() -> TimeInterval {
+        guard let clock = latency.voicedClock else { return 0 }
+        let voiced = clock()
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard voiced > 0, voiced <= now else { return 0 }
+        let s = Double(now &- voiced) / 1_000_000_000
+        return s <= 5 ? s : 0
     }
 
     /// Has the interviewer actually FINISHED and handed the floor over — i.e. is this a complete

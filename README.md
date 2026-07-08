@@ -13,10 +13,10 @@
 ```
 面接官の声
   → 通话 App 音频 tap（Zoom / Meet / Teams 等，只抓所选 App）
-  → 日语 STT（Deepgram，流式 interim + final）
+  → 日语 STT（Deepgram，流式 interim + final；国内自动切 Apple 端侧离线识别）
   → TurnManager（判停 · 取消 · epoch）
   → Router（命中预生成答案 / 导入原稿，或现场生成）
-  → LLM（Gemini / Claude）
+  → LLM（Gemini / Claude；国内优先 DeepSeek / 通义千问，可直连）
   → 刘海に表示（原稿に沿った日语回答）
 ```
 
@@ -65,14 +65,15 @@ scripts/dmg.sh           # 出 release：签名 .dmg 到 .build/（版本取自 
 
 **② 自带 Key**
 「设置 → API Key」分别填，存进 Keychain：
-- `DEEPGRAM_API_KEY`（日语流式 STT，走 live 必填）
+- `DEEPGRAM_API_KEY`（日语流式 STT；国内网络默认走 Apple 端侧识别，可不填）
 - `GEMINI_API_KEY` 或 `ANTHROPIC_API_KEY`（答案生成）
+- `DEEPSEEK_API_KEY` 或 `DASHSCOPE_API_KEY`（通义千问）——**国内网络必填其一**：Gemini/Claude 在大陆不可直连，App 检测到国内环境会自动优先使用可直连的域内服务
 
 也可用同名环境变量兜底，或手动改 `AppConfig.pipeline = .live`。
 
 **③ 分发者 — 生成激活码**
 ```sh
-scripts/mint-code.sh <DEEPGRAM_KEY> <LLM_KEY> [gemini|claude]
+scripts/mint-code.sh <DEEPGRAM_KEY|-> <LLM_KEY> [gemini|claude|deepseek|qwen]   # 国内码：`-` 跳过 Deepgram，deepseek/qwen 作 LLM
 ```
 输出一行 `nmk1.…`，私发给试用者粘贴即可。**激活码本身就是明文 Key**（本地 base64 解码，没有服务器，只是免去手填、不是加密），所以只发**限额、限时（Deepgram TTL）、一人一码**的 Key，泄露可廉价吊销。
 
@@ -100,7 +101,7 @@ scripts/mint-code.sh <DEEPGRAM_KEY> <LLM_KEY> [gemini|claude]
 ## 隐私与数据
 
 - **只抓所选通话 App 的音频**（自动检测或在设置指定），**不录麦克风**。浏览器通话无法只抓单个标签页，会捕获整个浏览器。
-- 音频实时上传 **Deepgram** 转写；识别出的问题（默认连同简历要点 / 原稿，可在「设置 → 隐私」关闭）发送给 **Gemini / Claude** 生成回答。**首次录音前弹出数据去向说明并需明确同意。**
+- 音频实时转写：Deepgram 引擎上传云端，Apple 端侧引擎（国内默认）在本机离线完成、**录音不上传**；识别出的问题（默认连同简历要点 / 原稿，可在「设置 → 隐私」关闭）发送给所选 AI（**Gemini / Claude / DeepSeek / 通义千问**）生成回答。**首次录音前弹出数据去向说明并需明确同意。**
 - API Key 存 **Keychain**；激活码解码后即为 Key，同样视作机密。
 - 录音状态可见、可一键暂停；**一键删除本地数据**（facts / answer_bank / scripts，位于源码运行时的 `knowledge/` 或安装后的 Application Support）。
 - 首次 `.live` 若没弹权限，去「系统设置 → 隐私与安全性 → 麦克风」勾选 notchmeet（macOS 把所有音频采集都归在「麦克风」类别下，只是权限分类，**不代表录你的麦**）。
@@ -124,9 +125,9 @@ scripts/mint-code.sh <DEEPGRAM_KEY> <LLM_KEY> [gemini|claude]
 |---|---|
 | `App/` | 启动引导、AppController（管线编排）|
 | `Audio/` | 进程 tap 音频采集、判停 |
-| `STT/` | Deepgram 日语流式转写、provider 抽象 |
+| `STT/` | Deepgram 日语流式转写、Apple 端侧离线识别（国内）、provider 抽象 |
 | `Brain/` | TurnManager 状态机、Router、意图、取消（epoch）|
-| `LLM/` | Gemini / Claude / FastLLM、就活 prompt、结构化事实接地 |
+| `LLM/` | Gemini / Claude / DeepSeek / 通义千问 / FastLLM、就活 prompt、结构化事实接地 |
 | `Prep/` | 原稿解析（ScriptParser）、CliRunner、预生成（PreGenerator）|
 | `Core/` | Keychain、配置、计时、本地化、激活码、更新检查、本地数据 |
 | `UI/` | 刘海（Notch）、引导（Onboarding）、设置（Settings）、状态栏菜单 |

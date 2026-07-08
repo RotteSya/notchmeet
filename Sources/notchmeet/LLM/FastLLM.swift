@@ -1,12 +1,24 @@
 import Foundation
 
-/// One-shot, non-streaming completion for small tasks (router judging, prep). Uses
-/// whatever key is available (Gemini → Claude).
+/// One-shot, non-streaming completion for small tasks (router judging, prep). Follows
+/// `ProviderRegistry.llmResolution()` so the router always talks to the same (reachable)
+/// backend as live generation — 国内即域内服务，避免 router 卡在被墙端点上超时。
 enum FastLLM {
     static func complete(system: String, user: String, maxTokens: Int = 600) async throws -> String {
-        if let k = Settings.apiKey("GEMINI_API_KEY") { return try await gemini(k, system, user, maxTokens) }
-        if let k = Settings.apiKey("ANTHROPIC_API_KEY") { return try await claude(k, system, user, maxTokens) }
-        throw LLMError.missingKey
+        switch ProviderRegistry.llmResolution() {
+        case .gemini:
+            return try await gemini(Settings.apiKey("GEMINI_API_KEY")!, system, user, maxTokens)
+        case .claude:
+            return try await claude(Settings.apiKey("ANTHROPIC_API_KEY")!, system, user, maxTokens)
+        case .deepseek:
+            return try await OpenAIChat.complete(.deepseek, apiKey: Settings.apiKey("DEEPSEEK_API_KEY")!,
+                                                 system: system, user: user, maxTokens: maxTokens)
+        case .qwen:
+            return try await OpenAIChat.complete(.qwen, apiKey: Settings.apiKey("DASHSCOPE_API_KEY")!,
+                                                 system: system, user: user, maxTokens: maxTokens)
+        case .none:
+            throw LLMError.missingKey
+        }
     }
 
     private static func gemini(_ key: String, _ sys: String, _ user: String, _ maxT: Int) async throws -> String {

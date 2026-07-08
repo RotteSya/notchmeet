@@ -112,7 +112,8 @@ struct OnboardingView: View {
         .onAppear {
             if scriptText.isEmpty { scriptText = initialScript }
             deepgramSet = keyPresent("DEEPGRAM_API_KEY")
-            llmSet = keyPresent("GEMINI_API_KEY") || keyPresent("ANTHROPIC_API_KEY")
+            llmSet = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"]
+                .contains(where: keyPresent)
         }
     }
 

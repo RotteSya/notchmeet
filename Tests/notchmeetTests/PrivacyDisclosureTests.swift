@@ -8,16 +8,25 @@ final class PrivacyDisclosureTests: XCTestCase {
 
     func testConsentBodyNamesEveryRecipientOfData() {
         for lang in [UILanguage.zh, .ja] {
-            let body = AppStrings(language: lang).consentBody(llm: "Gemini", sendsContext: true)
+            let body = AppStrings(language: lang).consentBody(llm: "Gemini", sttLocal: false, sendsContext: true)
             XCTAssertTrue(body.contains("Deepgram"), "consent must name Deepgram (\(lang))")
             XCTAssertTrue(body.contains("Gemini"), "consent must name the active LLM (\(lang))")
         }
     }
 
+    /// 国内路径（Apple 端侧 STT）：录音不上传——consent 不得再声称音频发给 Deepgram。
+    func testConsentBodyIsHonestAboutOnDeviceStt() {
+        for lang in [UILanguage.zh, .ja] {
+            let body = AppStrings(language: lang).consentBody(llm: "DeepSeek", sttLocal: true, sendsContext: true)
+            XCTAssertFalse(body.contains("Deepgram"), "on-device STT consent must not claim a Deepgram upload (\(lang))")
+            XCTAssertTrue(body.contains("DeepSeek"), "consent must still name the active LLM (\(lang))")
+        }
+    }
+
     func testConsentBodyReflectsContextOptOut() {
         let s = AppStrings(language: .zh)
-        let on = s.consentBody(llm: "Claude", sendsContext: true)
-        let off = s.consentBody(llm: "Claude", sendsContext: false)
+        let on = s.consentBody(llm: "Claude", sttLocal: false, sendsContext: true)
+        let off = s.consentBody(llm: "Claude", sttLocal: false, sendsContext: false)
         XCTAssertTrue(on.contains("简历") || on.contains("原稿"))
         XCTAssertNotEqual(on, off, "the disclosure must differ when context-sending is off")
     }

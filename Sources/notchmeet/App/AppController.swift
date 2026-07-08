@@ -144,6 +144,10 @@ final class AppController {
         // Live pipeline only: capture/upload NOTHING until the user has seen and accepted
         // exactly what leaves the device (call-app audio → Deepgram; question/context → LLM).
         if audio != nil, !ensureRecordingConsent() { return }
+        // Re-warm at session start: the arm-time warm connection has likely idled out by the
+        // time the interview actually begins, and the FIRST question is the worst moment to
+        // pay TLS/H2 cold-start (§14.4). Sends no user data — a 1-token ping.
+        prewarmLLM()
         do {
             // Open the audio tap FIRST so that "no call app to capture" throws before the STT
             // socket opens — we never start uploading when there is nothing to capture.
@@ -179,7 +183,9 @@ final class AppController {
         let t = AppStrings.current
         let alert = NSAlert()
         alert.messageText = t.consentTitle
-        alert.informativeText = t.consentBody(llm: currentLLMName(), sendsContext: Settings.sendContextToLLM)
+        alert.informativeText = t.consentBody(llm: currentLLMName(),
+                                              sttLocal: ProviderRegistry.sttResolution() == .apple,
+                                              sendsContext: Settings.sendContextToLLM)
         alert.addButton(withTitle: t.consentAgree)    // .alertFirstButtonReturn (default)
         alert.addButton(withTitle: t.consentCancel)
         NSApp.activate(ignoringOtherApps: true)
@@ -204,9 +210,7 @@ final class AppController {
     /// Name of the LLM the live pipeline will actually use (mirrors `ProviderRegistry`),
     /// so the consent disclosure names the real recipient of the question + context.
     private func currentLLMName() -> String {
-        if Settings.apiKey("GEMINI_API_KEY") != nil { return "Gemini" }
-        if Settings.apiKey("ANTHROPIC_API_KEY") != nil { return "Claude" }
-        return "AI"
+        ProviderRegistry.llmDisplayName() ?? "AI"
     }
 
     /// End the session: tear the tap + STT socket fully down so nothing is captured or
@@ -234,8 +238,7 @@ final class AppController {
     private func currentHealth() -> ControlPanel.Health {
         let now = DispatchTime.now().uptimeNanoseconds
         let dgKey = Settings.apiKey("DEEPGRAM_API_KEY") != nil
-        let llm: String? = Settings.apiKey("GEMINI_API_KEY") != nil ? "Gemini"
-            : (Settings.apiKey("ANTHROPIC_API_KEY") != nil ? "Claude" : nil)
+        let llm = ProviderRegistry.llmDisplayName()
         let voiced = audio?.lastVoicedUptimeNs ?? 0
         let voicedFresh = voiced != 0 && now &- voiced < 5_000_000_000
         // Readiness = tap started OK while recording — NOT "frames flowing": the tap only
@@ -256,7 +259,7 @@ final class AppController {
     /// when recording actually starts. `URLSession.shared` pools by host, so this warms the
     /// exact connection generate()/router reuse. Sends no user audio — only a 1-token ping.
     private func prewarmLLM() {
-        guard Settings.apiKey("GEMINI_API_KEY") != nil || Settings.apiKey("ANTHROPIC_API_KEY") != nil else { return }
+        guard ProviderRegistry.llmResolution() != .none else { return }
         Task.detached(priority: .utility) {
             let t0 = DispatchTime.now().uptimeNanoseconds
             _ = try? await FastLLM.complete(system: "warmup", user: ".", maxTokens: 1)
@@ -266,8 +269,7 @@ final class AppController {
     }
 
     private func makeRouter() -> Router {
-        (Settings.apiKey("GEMINI_API_KEY") != nil || Settings.apiKey("ANTHROPIC_API_KEY") != nil)
-            ? LLMRouter() : NullRouter()
+        ProviderRegistry.llmResolution() != .none ? LLMRouter() : NullRouter()
     }
 
     /// Open the settings window (optionally at a section). Lazily created and reused; shares

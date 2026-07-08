@@ -14,6 +14,16 @@ enum SttResolution: Equatable {
     case mock
 }
 
+/// `makeGenerator`／`FastLLM` 实际应使用的 LLM 后端；`Settings.resolveLLM` 是唯一的
+/// 选择逻辑（纯函数，便于测试），与 `SttResolution` 同一模式。
+enum LLMResolution: Equatable {
+    case gemini
+    case claude
+    case deepseek
+    case qwen
+    case none
+}
+
 /// Runtime settings + key resolution. Keys come from Keychain first, then env (dev).
 enum Settings {
     /// The product currently supports Japanese interviews. This is deliberately
@@ -78,6 +88,18 @@ enum Settings {
             if inChina { return .apple }
             return hasDeepgramKey ? .deepgram : .mock
         }
+    }
+
+    /// 按地区排序的 LLM 选择（无副作用）：国内优先可直连的域内服务（DeepSeek → Qwen）——
+    /// Gemini/Claude 端点在大陆不可直连，只作垫底（用户可能自备代理）；境外维持原有
+    /// Gemini → Claude 优先，域内服务作补充。
+    static func resolveLLM(hasGemini: Bool, hasClaude: Bool,
+                           hasDeepSeek: Bool, hasQwen: Bool,
+                           inChina: Bool) -> LLMResolution {
+        let domestic: [LLMResolution?] = [hasDeepSeek ? .deepseek : nil, hasQwen ? .qwen : nil]
+        let global: [LLMResolution?] = [hasGemini ? .gemini : nil, hasClaude ? .claude : nil]
+        let order = (inChina ? domestic + global : global + domestic).compactMap { $0 }
+        return order.first ?? .none
     }
 
     /// Resolve an API key by name: Keychain → environment variable.

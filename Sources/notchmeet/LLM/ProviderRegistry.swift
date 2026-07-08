@@ -4,16 +4,45 @@ import Foundation
 /// Falls back to mocks so the app always runs (PLAN §5 provider abstraction).
 enum ProviderRegistry {
     static func makeGenerator() -> AnswerGenerator {
-        if let k = Settings.apiKey("GEMINI_API_KEY") {
+        switch llmResolution() {
+        case .gemini:
             NSLog("[provider] LLM = Gemini")
-            return GeminiAnswerGenerator(apiKey: k)
-        }
-        if let k = Settings.apiKey("ANTHROPIC_API_KEY") {
+            return GeminiAnswerGenerator(apiKey: Settings.apiKey("GEMINI_API_KEY")!)
+        case .claude:
             NSLog("[provider] LLM = Claude")
-            return ClaudeAnswerGenerator(apiKey: k)
+            return ClaudeAnswerGenerator(apiKey: Settings.apiKey("ANTHROPIC_API_KEY")!)
+        case .deepseek:
+            NSLog("[provider] LLM = DeepSeek")
+            return OpenAIChatAnswerGenerator(endpoint: .deepseek, apiKey: Settings.apiKey("DEEPSEEK_API_KEY")!)
+        case .qwen:
+            NSLog("[provider] LLM = Qwen (DashScope)")
+            return OpenAIChatAnswerGenerator(endpoint: .qwen, apiKey: Settings.apiKey("DASHSCOPE_API_KEY")!)
+        case .none:
+            NSLog("[provider] no LLM key — using mock generator")
+            return MockAnswerGenerator()
         }
-        NSLog("[provider] no LLM key — using mock generator")
-        return MockAnswerGenerator()
+    }
+
+    /// The LLM the app WILL use, given available keys + region. Single source of truth
+    /// shared by `makeGenerator()`, `FastLLM`, consent and health so they never disagree
+    /// (same pattern as `sttResolution`). 国内优先域内可直连服务，见 `Settings.resolveLLM`.
+    static func llmResolution() -> LLMResolution {
+        Settings.resolveLLM(hasGemini: Settings.apiKey("GEMINI_API_KEY") != nil,
+                            hasClaude: Settings.apiKey("ANTHROPIC_API_KEY") != nil,
+                            hasDeepSeek: Settings.apiKey("DEEPSEEK_API_KEY") != nil,
+                            hasQwen: Settings.apiKey("DASHSCOPE_API_KEY") != nil,
+                            inChina: Settings.isLikelyInChina())
+    }
+
+    /// Display name for consent / health / settings; nil = no LLM configured.
+    static func llmDisplayName() -> String? {
+        switch llmResolution() {
+        case .gemini: return "Gemini"
+        case .claude: return "Claude"
+        case .deepseek: return OpenAIChatEndpoint.deepseek.display
+        case .qwen: return OpenAIChatEndpoint.qwen.display
+        case .none: return nil
+        }
     }
 
     /// The STT engine the app WILL use, given pref (incl. FI_STT_ENGINE), region, and key.

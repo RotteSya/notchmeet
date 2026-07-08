@@ -72,23 +72,18 @@ final class KeysSection: SectionScroll {
             KeyRowView(label: s.speechRecognitionProvider, name: "DEEPGRAM_API_KEY", onChanged: onKeysChanged),
             KeyRowView(label: "Gemini", name: "GEMINI_API_KEY", onChanged: onKeysChanged),
             KeyRowView(label: "Anthropic (Claude)", name: "ANTHROPIC_API_KEY", onChanged: onKeysChanged),
+            KeyRowView(label: "DeepSeek", name: "DEEPSEEK_API_KEY", onChanged: onKeysChanged),
+            KeyRowView(label: s.qwenProvider, name: "DASHSCOPE_API_KEY", onChanged: onKeysChanged),
         ]
         keyRows = rows
         // A setup code (nmk1.…) pasted into any field fills every key at once — refresh all rows then.
         for row in rows { row.onCodeApplied = { [weak self] in self?.keyRows.forEach { $0.refreshFromStore() } } }
-        scroll.setRows([
-            title,
-            SKBuild.divider(),
-            engineRow,
-            SKBuild.divider(),
-            rows[0],
-            SKBuild.divider(),
-            rows[1],
-            SKBuild.divider(),
-            rows[2],
-            SKBuild.divider(),
-            help,
-        ])
+        var stack: [NSView] = [title, SKBuild.divider(), engineRow]
+        for row in rows { stack += [SKBuild.divider(), row] }
+        // 国内网络：Gemini/Claude 不可直连——提示配置域内 LLM Key（境外用户不显示，避免噪音）。
+        if Settings.isLikelyInChina() { stack += [SKBuild.divider(), SKBuild.help(s.llmChinaHint)] }
+        stack += [SKBuild.divider(), help]
+        scroll.setRows(stack)
         scroll.gap(18, after: title)
         scroll.gap(16, after: scroll.stack.arrangedSubviews[scroll.stack.arrangedSubviews.count - 2])
     }
@@ -279,9 +274,7 @@ final class AnswerSection: SectionScroll {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private var currentLLM: String {
-        if Settings.apiKey("GEMINI_API_KEY") != nil { return "Gemini" }
-        if Settings.apiKey("ANTHROPIC_API_KEY") != nil { return "Claude" }
-        return s.notConfigured
+        ProviderRegistry.llmDisplayName() ?? s.notConfigured
     }
 }
 

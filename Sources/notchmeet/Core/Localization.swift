@@ -173,6 +173,11 @@ struct AppStrings {
     }
 
     func apiKeyTitle(_ provider: String) -> String { "\(provider) API Key" }
+    var qwenProvider: String { pick("通义千问（DashScope）", "通義千問（DashScope）") }
+    var llmChinaHint: String {
+        pick("国内网络无法直连 Gemini／Claude：请配置 DeepSeek 或通义千问 Key，App 会自动优先使用可直连的服务。",
+             "中国本土のネットワークでは Gemini／Claude に直接接続できません。DeepSeek または通義千問のキーを設定すると、自動的に優先して使用されます。")
+    }
     var apiKeyPrompt: String {
         pick("输入各自的 Key，或在任一栏粘贴激活码一次填好；留空并保存将删除。Key 会安全存入 macOS 钥匙串。",
              "各キーを入力するか、いずれかの欄にコードを貼り付けて一括設定できます。空欄で保存すると削除され、Keychain に保管されます。")
@@ -184,8 +189,8 @@ struct AppStrings {
         pick("确认删除全部本地数据？", "すべてのローカルデータを削除しますか？")
     }
     var deleteConfirmBody: String {
-        pick("将永久删除：面试原稿、答案库、简历事实，以及全部 API Key（Deepgram · Gemini · Anthropic）。此操作不可撤销。",
-             "面接原稿、回答バンク、履歴書ファクト、およびすべての API キー（Deepgram・Gemini・Anthropic）を完全に削除します。この操作は取り消せません。")
+        pick("将永久删除：面试原稿、答案库、简历事实，以及全部 API Key（Deepgram · Gemini · Anthropic · DeepSeek · 通义千问）。此操作不可撤销。",
+             "面接原稿、回答バンク、履歴書ファクト、およびすべての API キー（Deepgram・Gemini・Anthropic・DeepSeek・通義千問）を完全に削除します。この操作は取り消せません。")
     }
 
     // MARK: Recording consent (data-use disclosure shown before the first recording)
@@ -193,9 +198,15 @@ struct AppStrings {
     var consentTitle: String {
         pick("开始录音前，请确认数据去向", "録音を始める前に、データの送信先をご確認ください")
     }
-    /// `llm` = the model the live pipeline will actually use (Gemini/Claude); `sendsContext`
-    /// reflects whether resume/script grounding is currently enabled.
-    func consentBody(llm: String, sendsContext: Bool) -> String {
+    /// `llm` = the model the live pipeline will actually use; `sttLocal` = STT resolves to
+    /// Apple on-device (国内默认，录音不上传)，so the disclosure names the true audio path;
+    /// `sendsContext` reflects whether resume/script grounding is currently enabled.
+    func consentBody(llm: String, sttLocal: Bool, sendsContext: Bool) -> String {
+        let sttLine = sttLocal
+            ? pick("· 捕获你所选通话 App 播放的声音（不使用麦克风／摄像头／屏幕），并在本机离线转成文字——录音不会上传。",
+                   "· 選択した通話アプリの音声のみを取得し（マイク／カメラ／画面は不使用）、オンデバイスで文字起こしします——音声はアップロードされません。")
+            : pick("· 捕获你所选通话 App 播放的声音（不使用麦克风／摄像头／屏幕），并实时上传 Deepgram 转成文字。",
+                   "· 選択した通話アプリの音声のみを取得し（マイク／カメラ／画面は不使用）、リアルタイムで Deepgram に送信して文字起こしします。")
         let ctxLine = sendsContext
             ? pick("· 识别出的问题，连同你的简历要点与面试原稿，会发送给 \(llm) 生成回答。",
                    "· 認識された質問は、あなたの履歴書メモと面接原稿とともに \(llm) に送信され、回答を生成します。")
@@ -204,7 +215,7 @@ struct AppStrings {
         return pick(
             """
             录音期间：
-            · 捕获你所选通话 App 播放的声音（不使用麦克风／摄像头／屏幕），并实时上传 Deepgram 转成文字。
+            \(sttLine)
             \(ctxLine)
             · 仅 API Key 保存在本机。
 
@@ -212,7 +223,7 @@ struct AppStrings {
             """,
             """
             録音中：
-            · 選択した通話アプリの音声のみを取得し（マイク／カメラ／画面は不使用）、リアルタイムで Deepgram に送信して文字起こしします。
+            \(sttLine)
             \(ctxLine)
             · API キーのみ端末内に保存されます。
 
@@ -235,8 +246,8 @@ struct AppStrings {
 
     var privacyDataFlowTitle: String { pick("数据如何流动", "データの流れ") }
     var privacyDataFlowBody: String {
-        pick("录音期间，所选通话 App 的声音会实时上传 Deepgram 转写；识别出的问题（默认连同你的简历要点与面试原稿）会发送给所选 AI（Gemini 或 Claude）生成回答。API Key 与本地文件仅保存在本机，不使用麦克风、摄像头或屏幕。",
-             "録音中、選択した通話アプリの音声はリアルタイムで Deepgram に送信され文字起こしされます。認識された質問は（既定では履歴書メモと面接原稿とともに）選択した AI（Gemini または Claude）に送信され回答を生成します。API キーとローカルファイルは端末内にのみ保存され、マイク・カメラ・画面は使用しません。")
+        pick("录音期间，所选通话 App 的声音会实时转写：引擎为 Deepgram 时上传云端，为 Apple 本地（国内默认）时在本机离线完成、录音不上传。识别出的问题（默认连同你的简历要点与面试原稿）会发送给所选 AI（Gemini／Claude／DeepSeek／通义千问）生成回答。API Key 与本地文件仅保存在本机，不使用麦克风、摄像头或屏幕。",
+             "録音中、選択した通話アプリの音声はリアルタイムで文字起こしされます：エンジンが Deepgram の場合はクラウドに送信、Apple（オンデバイス）の場合は端末内で完結し音声は送信されません。認識された質問は（既定では履歴書メモと面接原稿とともに）選択した AI（Gemini／Claude／DeepSeek／通義千問）に送信され回答を生成します。API キーとローカルファイルは端末内にのみ保存され、マイク・カメラ・画面は使用しません。")
     }
     var sendContextLabel: String { pick("把简历要点与原稿发送给 AI", "履歴書メモと原稿を AI に送信") }
     var sendContextHelp: String {
