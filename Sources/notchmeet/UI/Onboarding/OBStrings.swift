@@ -23,6 +23,8 @@ struct OBStrings {
     let keyRequired, keyConnected, keyMissing, keyPrivacy, doneHpending: String
     let donePpending, sumDeepgramLabel, sumLLMLabel, btnFix, btnEnterAnyway: String
     let keyCodeLabel, keyCodePh, keyCodeHelp: String   // STEP 3 — single activation-code entry
+    // 就绪判定：国内网络下只有被墙端点（Gemini/Claude）的 Key 时的显性警告。
+    let sumLLMBlocked, llmChinaFoot: String
 
     static func of(_ lang: UILanguage) -> OBStrings { lang == .ja ? ja : zh }
 
@@ -63,7 +65,9 @@ struct OBStrings {
         doneHpending: "还差最后一步", donePpending: "完成下面标记「待设置」的项目，就能开始使用。",
         sumDeepgramLabel: "语音识别 · Deepgram", sumLLMLabel: "回答生成 · AI",
         btnFix: "去补齐设置", btnEnterAnyway: "仍然进入",
-        keyCodeLabel: "激活码", keyCodePh: "粘贴激活码", keyCodeHelp: "试用码由我们提供 · 自带 Key 请在设置中填写"
+        keyCodeLabel: "激活码", keyCodePh: "粘贴激活码", keyCodeHelp: "试用码由我们提供 · 自带 Key 请在设置中填写",
+        sumLLMBlocked: "已连接 · 当前网络无法直连",
+        llmChinaFoot: "⚠️ 国内网络无法直连 Gemini／Claude，面试中会一直超时。请配置通义千问或 DeepSeek Key，App 会自动优先使用可直连的服务。"
     )
 
     static let ja = OBStrings(
@@ -103,6 +107,8 @@ struct OBStrings {
         doneHpending: "あと一歩で完了", donePpending: "下の「未設定」の項目を整えると、すぐに使えます。",
         sumDeepgramLabel: "音声認識 · Deepgram", sumLLMLabel: "回答生成 · AI",
         btnFix: "設定を完了する", btnEnterAnyway: "そのまま開始",
-        keyCodeLabel: "アクティベーションコード", keyCodePh: "コードを貼り付け", keyCodeHelp: "試用コードはこちらでお渡しします · 自分のキーは設定から"
+        keyCodeLabel: "アクティベーションコード", keyCodePh: "コードを貼り付け", keyCodeHelp: "試用コードはこちらでお渡しします · 自分のキーは設定から",
+        sumLLMBlocked: "接続済み · 現在のネットワークでは直接接続不可",
+        llmChinaFoot: "⚠️ 中国本土のネットワークでは Gemini／Claude に直接接続できず、面接中はタイムアウトし続けます。通義千問または DeepSeek のキーを設定すると、自動的に優先して使用されます。"
     )
 }

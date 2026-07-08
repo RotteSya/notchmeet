@@ -251,6 +251,7 @@ final class AppController {
         else { state = .ready }
         return .init(recording: recording, captureOK: captureOK, captureState: state,
                      sttConnected: stt?.isConnected ?? false, deepgramKey: dgKey, llm: llm,
+                     llmChinaBlocked: ProviderRegistry.llmChinaBlocked(),
                      screenShareGuard: notch.screenShareGuarded)
     }
 

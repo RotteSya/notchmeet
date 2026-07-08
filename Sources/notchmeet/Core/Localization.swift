@@ -178,6 +178,11 @@ struct AppStrings {
         pick("国内网络无法直连 Gemini／Claude：请配置通义千问（推荐，出字更快）或 DeepSeek Key，App 会自动优先使用可直连的服务。",
              "中国本土のネットワークでは Gemini／Claude に直接接続できません。通義千問（推奨・応答が速い）または DeepSeek のキーを設定すると、自動的に優先して使用されます。")
     }
+    /// 自检菜单里 LLM 行下方的一行版警告（`llmChinaHint` 的短句，面向被墙场景）。
+    var llmChinaBlockedWarning: String {
+        pick("当前网络无法直连该服务：请配置通义千问或 DeepSeek Key",
+             "現在のネットワークでは直接接続できません：通義千問または DeepSeek のキーを設定してください")
+    }
     var apiKeyPrompt: String {
         pick("输入各自的 Key，或在任一栏粘贴激活码一次填好；留空并保存将删除。Key 会安全存入 macOS 钥匙串。",
              "各キーを入力するか、いずれかの欄にコードを貼り付けて一括設定できます。空欄で保存すると削除され、Keychain に保管されます。")

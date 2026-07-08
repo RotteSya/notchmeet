@@ -105,6 +105,13 @@ enum Settings {
         return order.first ?? .none
     }
 
+    /// 国内网络下解析出的 LLM 是否为被墙端点（Gemini/Claude 直连必然超时）。
+    /// 面试前自检与 Onboarding 就绪判定据此显性警告，避免用户带着只能超时的
+    /// 配置进入真实面试（纯函数，便于测试）。
+    static func llmBlockedInChina(_ resolution: LLMResolution, inChina: Bool) -> Bool {
+        inChina && (resolution == .gemini || resolution == .claude)
+    }
+
     /// Resolve an API key by name: Keychain → environment variable.
     static func apiKey(_ name: String) -> String? {
         if let v = Secrets.get(name), !v.isEmpty { return v }
