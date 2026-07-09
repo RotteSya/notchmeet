@@ -1,6 +1,6 @@
 import Foundation
 
-/// Checks GitHub Releases for a newer notchmeet build. The app ships as a notarized `.dmg`
+/// Checks GitHub Releases for a newer NotchMeet build. The app ships as a notarized `.dmg`
 /// published at github.com/RotteSya/notchmeet/releases (tagged `v<version>`, see
 /// scripts/release.sh), so "check for updates" just compares the latest published release
 /// against this bundle's version. Self-contained: no external dependency, no telemetry —
@@ -44,7 +44,7 @@ enum UpdateChecker {
         }
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("notchmeet", forHTTPHeaderField: "User-Agent") // GitHub rejects UA-less calls
+        request.setValue("NotchMeet", forHTTPHeaderField: "User-Agent") // GitHub rejects UA-less calls
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 15
 

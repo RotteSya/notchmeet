@@ -1,4 +1,4 @@
-# notchmeet
+# NotchMeet
 
 > 日本就活向 · 面接サポート（macOS · 原生 Swift）
 
@@ -37,7 +37,7 @@
 swift build              # 编译
 swift run                # mock 模式跑（刘海出现并演示流式答案，无需 key / 权限）
 scripts/dev-run.sh       # 开发循环：打成 .app（稳定 Bundle ID，TCC 权限需要）+ 杀旧实例 + 重启（加 -l 前台看日志）
-open .build/notchmeet.app
+open .build/NotchMeet.app
 scripts/release.sh       # 出对外可分发 release：Developer ID 签名 + 公证 + 装订 .dmg 到 .build/（版本取自 Info.plist）
 ```
 
@@ -103,7 +103,7 @@ scripts/mint-code.sh <DEEPGRAM_KEY|-> <LLM_KEY> [gemini|claude|deepseek|qwen]   
 - 音频实时转写：Deepgram 引擎上传云端，Apple 端侧引擎（国内默认）在本机离线完成、**录音不上传**；识别出的问题（默认连同简历要点 / 原稿，可在「设置 → 隐私」关闭）发送给所选 AI（**Gemini / Claude / DeepSeek / 通义千问**）生成回答。**首次录音前弹出数据去向说明并需明确同意。**
 - API Key 存 **Keychain**；激活码解码后即为 Key，同样视作机密。
 - 录音状态可见、可一键暂停；**一键删除本地数据**（facts / answer_bank / scripts，位于源码运行时的 `knowledge/` 或安装后的 Application Support）。
-- 首次 `.live` 若没弹权限，去「系统设置 → 隐私与安全性 → 麦克风」勾选 notchmeet（macOS 把所有音频采集都归在「麦克风」类别下，只是权限分类，**不代表录你的麦**）。
+- 首次 `.live` 若没弹权限，去「系统设置 → 隐私与安全性 → 麦克风」勾选 NotchMeet（macOS 把所有音频采集都归在「麦克风」类别下，只是权限分类，**不代表录你的麦**）。
 
 ## Phase -1 真机验证（完整 gate，见 PLAN §3）
 
@@ -118,7 +118,7 @@ scripts/mint-code.sh <DEEPGRAM_KEY|-> <LLM_KEY> [gemini|claude|deepseek|qwen]   
 
 ## 目录结构
 
-`Sources/notchmeet/` 按职责分层（详见 [PLAN.md](PLAN.md) §5）：
+`Sources/NotchMeet/` 按职责分层（详见 [PLAN.md](PLAN.md) §5）：
 
 | 目录 | 职责 |
 |---|---|

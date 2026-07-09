@@ -157,8 +157,8 @@ struct AppStrings {
              "オンデバイス日本語認識が利用できません：システム設定 → キーボード → 音声入力 で日本語を有効化してから再試行してください。")
     }
     var sttNotAuthorized: String {
-        pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 notchmeet。",
-             "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で notchmeet を許可してください。")
+        pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 NotchMeet。",
+             "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で NotchMeet を許可してください。")
     }
     /// 端侧日语语音模型按需下载中的进度提示（下载完成后自动开始识别）。
     func sttModelDownloading(_ percent: Int) -> String {
@@ -242,8 +242,8 @@ struct AppStrings {
 
     var noCallAppTitle: String { pick("未检测到通话 App", "通話アプリが見つかりません") }
     var noCallAppBody: String {
-        pick("notchmeet 只捕获通话 App 的声音，而不是全部系统声音。请先打开你的通话 App（Zoom／Teams／Meet 等），或在「设置 → 隐私与数据」中指定要捕获的 App。",
-             "notchmeet はシステム全体ではなく通話アプリの音声のみを取得します。通話アプリ（Zoom／Teams／Meet など）を起動するか、「設定 → プライバシー」で取得するアプリを指定してください。")
+        pick("NotchMeet 只捕获通话 App 的声音，而不是全部系统声音。请先打开你的通话 App（Zoom／Teams／Meet 等），或在「设置 → 隐私与数据」中指定要捕获的 App。",
+             "NotchMeet はシステム全体ではなく通話アプリの音声のみを取得します。通話アプリ（Zoom／Teams／Meet など）を起動するか、「設定 → プライバシー」で取得するアプリを指定してください。")
     }
     var openPrivacySettings: String { pick("打开隐私设置", "プライバシー設定を開く") }
 

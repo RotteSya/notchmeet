@@ -10,8 +10,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-APP=".build/notchmeet.app"
-BIN="$APP/Contents/MacOS/notchmeet"
+APP=".build/NotchMeet.app"
+BIN="$APP/Contents/MacOS/NotchMeet"
 
 # 1. Rebuild + assemble the .app from the RELEASE binary, with a stable Bundle ID so
 #    Keychain/TCC grants persist across rebuilds. System-audio capture only works from
@@ -34,7 +34,7 @@ else
 fi
 
 # 2. Stop any running instance (ignore "no process matched").
-pkill -f "notchmeet.app/Contents/MacOS/notchmeet" 2>/dev/null || true
+pkill -f "NotchMeet.app/Contents/MacOS/NotchMeet" 2>/dev/null || true
 sleep 1
 
 # 3. Relaunch.

@@ -1,4 +1,4 @@
-# notchmeet — 开发计划
+# NotchMeet — 开发计划
 
 > 日本就活向 · 实时面试提词器（AI Interview Prompter）
 > 监听面试官语音 → STT → 简历/知识库喂 LLM → 可直接照念的日语回答 → macOS 刘海（notch）交互区

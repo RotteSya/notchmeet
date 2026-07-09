@@ -2,7 +2,7 @@ import AppKit
 import CoreAudio
 import Darwin
 
-/// Resolves WHICH running app's audio the tap should capture, so notchmeet records only the
+/// Resolves WHICH running app's audio the tap should capture, so NotchMeet records only the
 /// call app's output — not all system audio. This is the data-minimization half of the
 /// privacy fix: the page promises "only the interviewer", so we capture exactly one app.
 ///

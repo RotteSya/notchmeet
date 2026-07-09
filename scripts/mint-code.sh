@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mint a notchmeet setup code that carries a Deepgram + LLM key in a single paste.
+# Mint a NotchMeet setup code that carries a Deepgram + LLM key in a single paste.
 #
 #   scripts/mint-code.sh <DEEPGRAM_KEY> <LLM_KEY> [gemini|claude|deepseek|qwen]
 #
@@ -7,7 +7,7 @@
 # 只发一个域内 LLM key（deepseek/qwen）即可。
 #
 # Output is one line: nmk1.<base64url(JSON)>. DM that line to a trial user; they paste it into the
-# onboarding key field and the app fills both keys for them (see Sources/notchmeet/Core/SetupCode.swift).
+# onboarding key field and the app fills both keys for them (see Sources/NotchMeet/Core/SetupCode.swift).
 #
 # The code IS the keys — there is no server. Hand out only SCOPED, TIME-LIMITED, SPEND-CAPPED keys,
 # one per recipient: a Deepgram key with a TTL, and an LLM key in a project/workspace with a hard cap.
