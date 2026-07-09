@@ -36,13 +36,12 @@
 ```sh
 swift build              # 编译
 swift run                # mock 模式跑（刘海出现并演示流式答案，无需 key / 权限）
-scripts/bundle.sh        # 打成 .app（稳定 Bundle ID，TCC 权限需要）
+scripts/dev-run.sh       # 开发循环：打成 .app（稳定 Bundle ID，TCC 权限需要）+ 杀旧实例 + 重启（加 -l 前台看日志）
 open .build/notchmeet.app
-scripts/dev-run.sh       # 开发循环：重打包 + 杀旧实例 + 重启（加 -l 前台看日志）
-scripts/dmg.sh           # 出 release：签名 .dmg 到 .build/（版本取自 Info.plist）
+scripts/release.sh       # 出对外可分发 release：Developer ID 签名 + 公证 + 装订 .dmg 到 .build/（版本取自 Info.plist）
 ```
 
-> `.app` 跑的是 **release** 二进制：改完代码后 `swift build` / `swift run` 看不到变化，要 `scripts/bundle.sh` 或 `scripts/dev-run.sh` 重打包。系统音频录制权限**只有在 `.app` bundle 下**才能拿到。
+> `.app` 跑的是 **release** 二进制：改完代码后 `swift build` / `swift run` 看不到变化，要 `scripts/dev-run.sh` 重打包。系统音频录制权限**只有在 `.app` bundle 下**才能拿到。
 
 ## 首次启动（引导）
 
@@ -77,7 +76,7 @@ scripts/mint-code.sh <DEEPGRAM_KEY|-> <LLM_KEY> [gemini|claude|deepseek|qwen]   
 ```
 输出一行 `nmk1.…`，私发给试用者粘贴即可。**激活码本身就是明文 Key**（本地 base64 解码，没有服务器，只是免去手填、不是加密），所以只发**限额、限时（Deepgram TTL）、一人一码**的 Key，泄露可廉价吊销。
 
-走 live 后 `scripts/bundle.sh && open .build/notchmeet.app`，授予录音权限后重开。
+走 live 后 `scripts/dev-run.sh`（重打包并重启），授予录音权限后重开。
 
 ## 导入面试原稿（面接原稿）
 

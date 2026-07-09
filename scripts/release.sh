@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build a Developer-ID-signed, Apple-NOTARIZED, stapled .dmg so other people can install and
 # run notchmeet with NO Gatekeeper prompt. This is the real distribution build — distinct from
-# scripts/bundle.sh (dev-only, Apple Development / ad-hoc, blocked on other Macs).
+# scripts/dev-run.sh (dev-only, Apple Development / ad-hoc, blocked on other Macs).
 #
 # One-time setup (secrets stay in your Keychain, never in the repo):
 #   1. Create an app-specific password at https://appleid.apple.com → Sign-In and Security.
