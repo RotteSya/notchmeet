@@ -62,7 +62,8 @@ enum OpenAIChat {
         let r = try request(ep, apiKey: apiKey,
                             body: body(ep, system: system, user: user,
                                        maxTokens: maxTokens, temperature: 0.2, stream: false))
-        let d = try await LLMHTTP.send(r)
+        // 域内端点直连，绕过全局梯子（见 LLMHTTP.directSession）。
+        let d = try await LLMHTTP.send(r, bypassSystemProxy: true)
         guard let o = try JSONSerialization.jsonObject(with: d) as? [String: Any],
               let choices = o["choices"] as? [[String: Any]],
               let msg = choices.first?["message"] as? [String: Any] else { return "" }
@@ -86,6 +87,8 @@ final class OpenAIChatAnswerGenerator: AnswerGenerator {
                                    user: Prompts.user(question: req.question, history: req.history),
                                    maxTokens: 512, temperature: 0.5, stream: true)
         let request = try OpenAIChat.request(endpoint, apiKey: apiKey, body: body)
-        try await LLMHTTP.streamSSE(request, extract: OpenAIChat.delta, onDelta: onDelta)
+        // 域内端点直连，绕过全局梯子（见 LLMHTTP.directSession）。
+        try await LLMHTTP.streamSSE(request, bypassSystemProxy: true,
+                                    extract: OpenAIChat.delta, onDelta: onDelta)
     }
 }
