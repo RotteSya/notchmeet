@@ -445,6 +445,20 @@ final class AppController {
             if !t.text.isEmpty { self?.inactivity.noteActivity() } // interviewer was heard
             DispatchQueue.main.async { tm?.handleTranscript(t) }
         }
+        // 端侧日语资产缺失时（Apple 引擎，macOS 26+）主动下载模型；把进度接到既有的
+        // STT 状态/错误通道（`.sttError` + `errorDetail` 会被 NotchPresentation 渲染为整句正文）。
+        // 只在具体类上取回调，不改 `SttClient` 协议，避免波及 Deepgram 客户端。
+        if let apple = sttc as? AppleSpeechSttClient {
+            apple.onAssetDownloadProgress = { [weak self] frac in
+                let pct = max(0, min(100, Int(frac * 100)))
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.notch.model.status = .error
+                    self.notch.model.message = .sttError
+                    self.notch.model.errorDetail = AppStrings.current.sttModelDownloading(pct)
+                }
+            }
+        }
         sttc.onError = { [weak self] err in
             NSLog("[stt] error: %@", String(describing: err))
             // Only terminal on-device errors (auth denied / no ja model) surface to the user;

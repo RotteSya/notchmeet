@@ -160,6 +160,11 @@ struct AppStrings {
         pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 notchmeet。",
              "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で notchmeet を許可してください。")
     }
+    /// 端侧日语语音模型按需下载中的进度提示（下载完成后自动开始识别）。
+    func sttModelDownloading(_ percent: Int) -> String {
+        pick("正在下载日语语音模型（\(percent)%）…完成后会自动开始识别。",
+             "日本語の音声モデルをダウンロード中（\(percent)%）…完了後に自動で認識を開始します。")
+    }
 
     func captureHealth(_ state: CaptureHealthState) -> String {
         switch state {
