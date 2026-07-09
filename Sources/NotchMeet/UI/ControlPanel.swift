@@ -16,6 +16,8 @@ final class ControlPanel: NSObject {
         var sttConnected = false
         var deepgramKey = false
         var llm: String?
+        /// 国内网络 + 解析结果是被墙端点（Gemini/Claude）：LLM 行降级为 ⚠️ 并附提示。
+        var llmChinaBlocked = false
         var screenShareGuard = false
         static let empty = Health()
     }
@@ -65,7 +67,16 @@ final class ControlPanel: NSObject {
             addInfo(menu, "   \(t.interviewerAudio)  \(audioMark)  \(t.captureHealth(h.captureState))")
             addInfo(menu, "   \(t.sttConnection)  \(sttMark)")
             addInfo(menu, "   \(t.deepgramKey)  \(h.deepgramKey ? "✓" : "✗")")
-            addInfo(menu, "   \(t.answerLLM)  \(h.llm != nil ? "✓ \(h.llm!)" : "✗ \(t.notConfigured)")")
+            // 配了 Key 但端点在当前网络被墙 → 不能亮 ✓（会假装就绪），降级为 ⚠️ + 修复提示。
+            let llmStatus: String = if let name = h.llm {
+                h.llmChinaBlocked ? "⚠️ \(name)" : "✓ \(name)"
+            } else {
+                "✗ \(t.notConfigured)"
+            }
+            addInfo(menu, "   \(t.answerLLM)  \(llmStatus)")
+            if h.llm != nil, h.llmChinaBlocked {
+                addInfo(menu, "      \(t.llmChinaBlockedWarning)")
+            }
             addInfo(menu, "   \(t.screenShareGuard)  \(h.screenShareGuard ? "✓" : "⚠️")")
             menu.addItem(.separator())
         }

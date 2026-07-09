@@ -62,6 +62,18 @@ struct OnboardingView: View {
     /// the live pipeline gates on (`Settings.apiKey`). Gating「准备就绪」on this is what makes
     /// the terminal state honest instead of an unconditional celebration.
     private var allReady: Bool { permGranted && deepgramSatisfied && llmSatisfied }
+    /// 国内网络 + 只有被墙端点（Gemini/Claude）的 Key：就绪总结里显性警告，而不是亮 ✓。
+    /// 镜像 live resolver（`ProviderRegistry.llmResolution`）的判断，Key 在到达 done 步前
+    /// 已由 `commitKeys()` 落盘，所以 `keyPresent` 反映真实状态。
+    private var llmChinaBlocked: Bool {
+        Settings.llmBlockedInChina(
+            Settings.resolveLLM(hasGemini: keyPresent("GEMINI_API_KEY"),
+                                hasClaude: keyPresent("ANTHROPIC_API_KEY"),
+                                hasDeepSeek: keyPresent("DEEPSEEK_API_KEY"),
+                                hasQwen: keyPresent("DASHSCOPE_API_KEY"),
+                                inChina: Settings.isLikelyInChina()),
+            inChina: Settings.isLikelyInChina())
+    }
 
     /// The script entry the demo plays back, so the notch shows the user's OWN verbatim
     /// answer. Prefer the motivation question — it lines up with the default copy — else
@@ -471,12 +483,19 @@ struct OnboardingView: View {
                 summaryDivider
                 summaryRow(t.sumDeepgramLabel, deepgramSatisfied ? t.keyConnected : t.keyMissing, on: deepgramSatisfied)
                 summaryDivider
-                summaryRow(t.sumLLMLabel, llmSatisfied ? t.keyConnected : t.keyMissing, on: llmSatisfied)
+                summaryRow(t.sumLLMLabel,
+                           llmSatisfied ? (llmChinaBlocked ? t.sumLLMBlocked : t.keyConnected) : t.keyMissing,
+                           on: llmSatisfied && !llmChinaBlocked)
                 summaryDivider
                 summaryRow(t.sumLanguageLabel, t.sumLanguageValue, on: true)
             }
             .obSurface(cornerRadius: 12, fill: 0.18)
             .padding(.top, 14).frame(maxWidth: 360)
+
+            if llmSatisfied && llmChinaBlocked {
+                Text(t.llmChinaFoot).font(.system(size: 11)).lineSpacing(2).multilineTextAlignment(.center)
+                    .foregroundStyle(.orange.opacity(0.9)).frame(maxWidth: 360).padding(.top, 8)
+            }
 
             if ready {
                 OBStartButton(t.btnStart) { commitScript(); commitKeys(); finish(permGranted, recognized.count) }

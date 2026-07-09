@@ -45,6 +45,12 @@ enum ProviderRegistry {
         }
     }
 
+    /// 当前解析结果在国内网络下是否被墙（只有 Gemini/Claude key、没有域内 key）。
+    /// 自检与就绪判定用它给出「无法直连」警告。
+    static func llmChinaBlocked() -> Bool {
+        Settings.llmBlockedInChina(llmResolution(), inChina: Settings.isLikelyInChina())
+    }
+
     /// The STT engine the app WILL use, given pref (incl. FI_STT_ENGINE), region, and key.
     /// Single source of truth shared by `makeStt()` and the launch gate so they never disagree.
     static func sttResolution() -> SttResolution {
