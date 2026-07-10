@@ -354,7 +354,7 @@ private final class RecordHitView: NSView {
 
 /// The matched/predicted intent as a quiet accent tag — a glance-check that the notch
 /// understood the question. A soft brand-tinted capsule, never a hard pill.
-private final class IntentChipView: NSView {
+final class IntentChipView: NSView {
     private let label = NSTextField(labelWithString: "")
     var text: String = "" {
         didSet {
@@ -385,14 +385,18 @@ private final class IntentChipView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// Size from the cell, not intrinsicContentSize: the field's intrinsic width omits the
+    /// cell insets (自己紹介: intrinsic 43.0 vs cellSize 46.6), so the last glyph clipped.
+    private var labelSize: NSSize { label.cell?.cellSize ?? label.intrinsicContentSize }
+
     override var intrinsicContentSize: NSSize {
-        let s = label.intrinsicContentSize
-        return NSSize(width: ceil(s.width) + hPad * 2 + 2, height: ceil(s.height) + vPad * 2)
+        let s = labelSize
+        return NSSize(width: ceil(s.width) + hPad * 2, height: ceil(s.height) + vPad * 2)
     }
 
     override func layout() {
         super.layout()
-        let s = label.intrinsicContentSize
+        let s = labelSize
         label.frame = CGRect(x: hPad, y: (bounds.height - s.height) / 2, width: bounds.width - hPad * 2, height: s.height)
     }
 

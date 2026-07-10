@@ -264,7 +264,7 @@ final class TurnManager: @unchecked Sendable {
         var hist = ""
         if Settings.sendContextToLLM {
             ctx = knowledge.context(for: question)
-            if let script = scriptStore?.contextBlock(), !script.isEmpty {
+            if let script = scriptStore?.contextBlock(for: question), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
             hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
@@ -294,16 +294,35 @@ final class TurnManager: @unchecked Sendable {
             guard let self, myEpoch == self.epoch else { return }
             guard let d = decision else { return }
             if !d.intent.isEmpty { self.model.intentLabel = d.intent }
-            guard let ans = d.matchedAnswer, self.committedEpoch != myEpoch else { return }
-            // Cache wins the turn.
-            self.committedEpoch = myEpoch
-            self.liveTask?.cancel()
-            self.latency.markFirstReadable(epoch: myEpoch, kind: .cache)
-            self.model.status = .streaming
-            self.model.message = .suggesting
-            self.model.answer = ans
-            self.finishTurn(myEpoch)
+            guard let ans = d.matchedAnswer else { return }
+            if self.committedEpoch != myEpoch {
+                // Cache wins the turn.
+                self.committedEpoch = myEpoch
+                self.liveTask?.cancel()
+                self.latency.markFirstReadable(epoch: myEpoch, kind: .cache)
+                self.commitAnswer(ans, myEpoch: myEpoch)
+            } else if self.liveIsCommittedSource, self.state != .presenting {
+                // Live's first sentence beat the router, but the user WROTE this answer —
+                // while the live text is still growing (nobody has finished reading it),
+                // swapping to the verbatim script is strictly better than an invented one.
+                // Once the answer has settled (.presenting) we never swap mid-read.
+                NSLog("[router] late hit (turn %d): replacing streaming live answer with 原稿", myEpoch)
+                self.liveTask?.cancel()
+                self.liveIsCommittedSource = false   // late live deltas are dropped by runLive's guard
+                self.commitAnswer(ans, myEpoch: myEpoch)
+            } else {
+                // Diagnosability: before this log existed, a lost race was indistinguishable
+                // from a router miss in the field (the "answer isn't my script" reports).
+                NSLog("[router] late hit (turn %d): answer already settled — 原稿 dropped", myEpoch)
+            }
         }
+    }
+
+    @MainActor private func commitAnswer(_ ans: String, myEpoch: Int) {
+        model.status = .streaming
+        model.message = .suggesting
+        model.answer = ans
+        finishTurn(myEpoch)
     }
 
     // MARK: - Source B: live generation (staged → commit on first complete sentence)

@@ -26,6 +26,11 @@ enum ScriptParser {
                 buffer.removeAll(keepingCapacity: true)
                 return
             }
+            if cleanAnswer(buffer.joined(separator: "\n")).isEmpty {
+                // Two headings in a row: usually the document title, but log it — a
+                // dropped heading with a real question would silently lose an entry.
+                NSLog("[parser] heading without answer dropped: %@", heading)
+            }
             append(question: heading, answer: buffer.joined(separator: "\n"))
             buffer.removeAll(keepingCapacity: true)
         }
@@ -45,9 +50,13 @@ enum ScriptParser {
 
             let previousIsBlank = index == 0 || lines[index - 1].trimmed.isEmpty
             let nextLine = index + 1 < lines.count ? lines[index + 1] : nil
+            // 逆質問の回答は準備した質問文そのもの — その中の質問行を新しい見出しに
+            // 昇格させると項目が分裂する。明示的な見出し（#/ラベル）だけ許す。
+            let allowUnlabelled = !(heading.map(isReverseQuestionTopic) ?? false)
             if let newHeading = headingText(line,
                                             nextLine: nextLine,
-                                            previousIsBlank: previousIsBlank) {
+                                            previousIsBlank: previousIsBlank,
+                                            allowUnlabelledQuestion: allowUnlabelled) {
                 flush()
                 heading = newHeading
                 // The next line is a Setext underline (`---` / `===`), not answer text.
@@ -63,33 +72,35 @@ enum ScriptParser {
 
     // MARK: - Heading recognition
 
+    private static func isReverseQuestionTopic(_ heading: String) -> Bool {
+        let key = compact(heading).lowercased()
+        return ["逆質問", "何か質問", "反向提问", "questionsforus"].contains { key.contains($0) }
+    }
+
     private static func headingText(_ line: String,
                                     nextLine: String?,
-                                    previousIsBlank: Bool) -> String? {
+                                    previousIsBlank: Bool,
+                                    allowUnlabelledQuestion: Bool = true) -> String? {
         var text = line.trimmed
         guard !text.isEmpty else { return nil }
 
         // Markdown ATX headings. Requiring whitespace after `#` avoids treating hashtags
-        // inside an answer as a new question.
+        // inside an answer as a new question. Q/深掘り labels inside the heading are
+        // stripped so the stored question is the actual question text.
         if let match = capture(text, pattern: #"^#{1,6}\s+(.+?)(?:\s+#+)?$"#) {
-            return cleanQuestion(match)
+            return cleanQuestion(stripQuestionLabel(match))
         }
 
         // Markdown Setext headings:
         //   志望動機
         //   --------
         if let nextLine, isSetextUnderline(nextLine), text.count <= 100 {
-            return cleanQuestion(unwrappedEmphasis(text))
+            return cleanQuestion(stripQuestionLabel(text))
         }
 
         text = unwrappedEmphasis(text)
 
         // Explicit Q / question / interviewer / follow-up labels, with optional numbers.
-        let explicitPatterns = [
-            #"^(?:Q(?:uestion)?|質問|問題|问题|问|問|面接官)\s*[0-9０-９]*\s*[:：.．、)）]\s*(.+)$"#,
-            #"^(?:質問|問題|问题|问|問)\s*[0-9０-９]+\s+(.+)$"#,
-            #"^(?:深掘り|深堀り|追加質問|追問|追问|Follow[- ]?up)\s*[0-9０-９]*\s*[:：.．、)）]\s*(.+)$"#,
-        ]
         for pattern in explicitPatterns {
             if let match = capture(text, pattern: pattern, caseInsensitive: true) {
                 return cleanQuestion(match)
@@ -119,7 +130,7 @@ enum ScriptParser {
 
         // Finally accept an unlabelled question sentence when it starts a paragraph.
         // Paragraph position is an important false-positive guard for prose answers.
-        if previousIsBlank, text.count <= 120, looksLikeQuestion(text) {
+        if allowUnlabelledQuestion, previousIsBlank, text.count <= 120, looksLikeQuestion(text) {
             return cleanQuestion(text)
         }
         return nil
@@ -144,17 +155,41 @@ enum ScriptParser {
         return topics.contains(key)
     }
 
+    /// A line counts as a question ONLY when it ENDS like one (…か／？／依頼形) or
+    /// opens with an interrogative marker in Chinese. Substring signals (なぜ/どのよう
+    /// appearing anywhere) mis-fired on real scripts: answer paragraphs that merely
+    /// mention them were promoted to headings, destroying the entry they belonged to.
     private static func looksLikeQuestion(_ value: String) -> Bool {
         let text = value.trimmed
-        guard text != "よろしくお願いします。", text != "よろしくお願いいたします。" else { return false }
+        let core = text.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、…!！?？"))
+        // 挨拶・結びで終わる行は質問ではない。全文一致ではなく末尾一致で判定する：
+        // 回答の結び段落は「〜と考えています。本日はどうぞよろしくお願いいたします。」の
+        // ように前文を伴うのが普通で、お願いします 接尾だけ見ると依頼形と誤爆する。
+        let closingTails = ["よろしくお願いします", "よろしくお願いいたします",
+                            "ありがとうございます", "ありがとうございました"]
+        guard !closingTails.contains(where: core.hasSuffix) else { return false }
         if text.hasSuffix("?") || text.hasSuffix("？") { return true }
-        let signals = [
-            "をお願いします", "をお願いいたします", "教えてください", "聞かせてください",
-            "説明してください", "お聞かせください", "なぜ", "どうして", "どのよう",
-            "何を", "何ですか", "どんな", "いかがですか", "ありますか", "できますか",
-            "思いますか", "理由を", "请介绍", "请说明", "为什么", "如何", "是什么"
-        ]
-        return signals.contains { text.localizedCaseInsensitiveContains($0) }
+        if core.hasSuffix("か") { return true }        // …ですか／…でしょうか／…のか
+        let requestTails = ["ください", "下さい", "お願いします", "お願いいたします",
+                            "是什么", "吗"]
+        if requestTails.contains(where: core.hasSuffix) { return true }
+        let interrogativePrefixes = ["请", "为什么", "如何"]
+        return interrogativePrefixes.contains(where: core.hasPrefix)
+    }
+
+    /// Q1: / 深掘り: … labels — shared by explicit label lines and (after F1) headings.
+    private static let explicitPatterns = [
+        #"^(?:Q(?:uestion)?|質問|問題|问题|问|問|面接官)\s*[0-9０-９]*\s*[:：.．、)）]\s*(.+)$"#,
+        #"^(?:質問|問題|问题|问|問)\s*[0-9０-９]+\s+(.+)$"#,
+        #"^(?:深掘り|深堀り|追加質問|追問|追问|Follow[- ]?up)\s*[0-9０-９]*\s*[:：.．、)）]\s*(.+)$"#,
+    ]
+
+    private static func stripQuestionLabel(_ raw: String) -> String {
+        let text = unwrappedEmphasis(raw.trimmed)
+        for pattern in explicitPatterns {
+            if let match = capture(text, pattern: pattern, caseInsensitive: true) { return match }
+        }
+        return text
     }
 
     // MARK: - Answer cleanup and table support
