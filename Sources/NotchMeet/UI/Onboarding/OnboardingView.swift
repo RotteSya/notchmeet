@@ -49,19 +49,22 @@ struct OnboardingView: View {
     @State private var demoResetWork: DispatchWorkItem?
     @Namespace private var langNS
 
-    private let total = 6
+    private let total = 7
     private var lang: UILanguage { languageStore.language }
     private var t: OBStrings { .of(languageStore.language) }
     private var recognized: [BankEntry] { ScriptParser.parse(scriptText) }
 
-    /// Each required service has a usable key: either one was already present (seeded from
-    /// `keyPresent`) or the user just typed one (committed on Next/finish).
-    private var deepgramSatisfied: Bool { deepgramSet }
-    private var llmSatisfied: Bool { llmSet }
-    /// The app can only actually work with audio permission AND both keys — the SAME predicate
-    /// the live pipeline gates on (`Settings.apiKey`). Gating「准备就绪」on this is what makes
+    /// 就绪判定镜像真实管线的解析器（出厂内置 Key、国内 Apple 本地 STT 都算数），
+    /// 而不是「Keychain 里有没有某个 Key」——否则国内用户（本地识别，无需 Deepgram）
+    /// 和开箱即用的商业构建会被误判为「还差一步」。
+    private var sttSatisfied: Bool { ProviderRegistry.sttResolution() != .mock }
+    private var llmSatisfied: Bool { ProviderRegistry.llmResolution() != .none }
+    /// The app can only actually work with audio permission AND resolvable services — the
+    /// SAME predicate the live pipeline gates on. Gating「准备就绪」on this is what makes
     /// the terminal state honest instead of an unconditional celebration.
-    private var allReady: Bool { permGranted && deepgramSatisfied && llmSatisfied }
+    private var allReady: Bool { permGranted && sttSatisfied && llmSatisfied }
+    /// 出厂含受管服务：见面礼步替代激活码步。
+    private var hasBundledService: Bool { Provisioning.hasService }
     /// 国内网络 + 只有被墙端点（Gemini/Claude）的 Key：就绪总结里显性警告，而不是亮 ✓。
     /// 镜像 live resolver（`ProviderRegistry.llmResolution`）的判断，Key 在到达 done 步前
     /// 已由 `commitKeys()` 落盘，所以 `keyPresent` 反映真实状态。
@@ -126,16 +129,23 @@ struct OnboardingView: View {
             deepgramSet = keyPresent("DEEPGRAM_API_KEY")
             llmSet = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"]
                 .contains(where: keyPresent)
+            #if DEBUG
+            // 视觉 QA：FI_OB_STEP=<0…6> 直接落到某一步截图，不必逐步点击。
+            if let raw = ProcessInfo.processInfo.environment["FI_OB_STEP"], let n = Int(raw) {
+                step = max(0, min(total - 1, n))
+            }
+            #endif
         }
     }
 
     @ViewBuilder private var stepContent: some View {
         switch step {
         case 0: welcomeStep
-        case 1: importStep
-        case 2: permissionStep
-        case 3: keysStep
-        case 4: demoStep
+        case 1: howStep
+        case 2: importStep
+        case 3: permissionStep
+        case 4: hasBundledService ? AnyView(giftStep) : AnyView(keysStep)
+        case 5: demoStep
         default: doneStep
         }
     }
@@ -211,6 +221,55 @@ struct OnboardingView: View {
                 .font(.system(size: 11)).foregroundStyle(OB.ink.opacity(0.3))
                 .padding(.top, 14)
             Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: step 1 — how it works（三拍动画：提问 → 对稿 → 上刘海）
+
+    private var howStep: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            OBKicker(text: t.kHow)
+            Text(t.hHow).font(.system(size: 21, weight: .semibold)).foregroundStyle(.white).padding(.top, 12)
+            Text(t.pHow).font(.system(size: 12.5)).lineSpacing(3).foregroundStyle(OB.ink.opacity(0.54)).padding(.top, 8)
+
+            Spacer(minLength: 10)
+            OBHowItWorks(t: t)
+            Spacer(minLength: 10)
+
+            navBar {
+                OBPrimaryButton(t.btnNext) { next() }
+            }
+        }
+    }
+
+    // MARK: step 4（有内置服务时）— 见面礼：额度到账
+
+    private var giftStep: some View {
+        let balance = CreditManager.shared.balanceSeconds
+        let fresh = CreditManager.shared.welcomeGrantedThisLaunch
+        return VStack(alignment: .leading, spacing: 0) {
+            OBKicker(text: t.kGift)
+            Text(fresh ? t.hGiftGranted : t.hGiftBalance)
+                .font(.system(size: 21, weight: .semibold)).foregroundStyle(.white).padding(.top, 12)
+            Text(t.pGift).font(.system(size: 12.5)).lineSpacing(3).foregroundStyle(OB.ink.opacity(0.54)).padding(.top, 8)
+
+            Spacer(minLength: 8)
+            HStack {
+                Spacer(minLength: 0)
+                OBGiftReveal(minutes: max(0, balance / 60),
+                             unit: AppStrings(language: lang).walletUnitMinutes)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 9) {
+                Image(systemName: "key.horizontal.fill").font(.system(size: 12)).foregroundStyle(OB.ink.opacity(0.4))
+                Text(t.giftNote).font(.system(size: 11.5)).foregroundStyle(OB.ink.opacity(0.44))
+                Spacer(minLength: 0)
+            }.padding(.top, 10)
+            Spacer(minLength: 8)
+            navBar {
+                OBPrimaryButton(t.btnNext) { next() }
+            }
         }
     }
 
@@ -476,17 +535,23 @@ struct OnboardingView: View {
             Text(ready ? t.doneP : t.donePpending).font(.system(size: 13)).lineSpacing(3).multilineTextAlignment(.center)
                 .foregroundStyle(OB.ink.opacity(0.58)).frame(maxWidth: 330).padding(.top, 8)
 
+            let creditBalance = CreditManager.shared.balanceSeconds
             VStack(spacing: 0) {
                 summaryRow(t.sumScriptLabel, recognized.isEmpty ? t.skipped : "\(recognized.count) \(t.unitCount)", on: !recognized.isEmpty)
                 summaryDivider
                 summaryRow(t.sumPermLabel, permGranted ? t.permSet : t.permUnset, on: permGranted)
                 summaryDivider
-                summaryRow(t.sumDeepgramLabel, deepgramSatisfied ? t.keyConnected : t.keyMissing, on: deepgramSatisfied)
+                summaryRow(t.sumDeepgramLabel, sttSatisfied ? t.keyConnected : t.keyMissing, on: sttSatisfied)
                 summaryDivider
                 summaryRow(t.sumLLMLabel,
                            llmSatisfied ? (llmChinaBlocked ? t.sumLLMBlocked : t.keyConnected) : t.keyMissing,
                            on: llmSatisfied && !llmChinaBlocked)
                 summaryDivider
+                // 额度行只对「额度概念存在」的安装显示（内置服务或已兑过码）。
+                if hasBundledService || creditBalance > 0 {
+                    summaryRow(t.sumCreditLabel, AppStrings(language: lang).creditMinutes(creditBalance), on: creditBalance > 0)
+                    summaryDivider
+                }
                 summaryRow(t.sumLanguageLabel, t.sumLanguageValue, on: true)
             }
             .obSurface(cornerRadius: 12, fill: 0.18)
@@ -592,14 +657,23 @@ struct OnboardingView: View {
     /// through the step without typing never clears an existing key. Idempotent: called on the
     /// key step's Next and again on finish. Going live happens once, in the controller's finish.
     private func commitKeys() {
-        // Onboarding takes a single activation code (nmk1.…) that carries the Deepgram + LLM key,
-        // so a trial user pastes one string instead of obtaining two API keys. BYO users enter raw
-        // keys in Settings instead. A non-code paste decodes to nil and is ignored here.
-        guard let keys = SetupCode.decode(setupCode) else { return }
+        let raw = setupCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        // 激活码有两种：充值码 nmc1（签名票据：入账分钟 + 可携带服务 Key）与运维设置码
+        // nmk1（只带 Key）。用户不需要分辨——都叫「激活码」，这里按序尝试。
+        if case .success = CreditManager.shared.redeem(raw) {
+            deepgramSet = keyPresent("DEEPGRAM_API_KEY")
+            llmSet = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"]
+                .contains(where: keyPresent)
+            setupCode = ""
+            return
+        }
+        guard let keys = SetupCode.decode(raw) else { return }
         for (name, value) in keys {
             let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !v.isEmpty else { continue }
             saveKey(name, v)
+            Settings.markKeyManaged(name, true)   // 码发放的 Key＝受管（计量）
             if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true }
         }
         setupCode = ""
@@ -607,7 +681,7 @@ struct OnboardingView: View {
 
     /// From the「还差一步」done state, jump to the first requirement that isn't met.
     private func goToFirstUnmet() {
-        withAnimation(OB.spring) { step = permGranted ? 3 : 2 }   // keys step, else permission step
+        withAnimation(OB.spring) { step = permGranted ? 4 : 3 }   // 激活/见面礼步，否则权限步
     }
 
     static let sampleScript = """

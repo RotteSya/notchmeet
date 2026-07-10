@@ -47,6 +47,12 @@ final class NotchController {
                 DispatchQueue.main.async { self?.onModelChanged() }
             }
             .store(in: &cancellables)
+
+        // 外观设置（回答字号）变化 → 走既有的 model 通道，让视图重绘 + 面板按新字号量高。
+        NotificationCenter.default.publisher(for: .nmAppearanceChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.model.objectWillChange.send() }
+            .store(in: &cancellables)
     }
 
     private var visible = true
@@ -127,7 +133,7 @@ final class NotchController {
             // morph tween (NotchPalette.morphDuration) driving the shape radii + content, so the
             // frame and its contents arrive as one body — the liquid notch morph.
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.42
+                ctx.duration = NotchPalette.morphDuration   // 与 NotchView 的 morph tween 严格同长
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.90, 0.24, 1.00)
                 panel.animator().setFrame(f, display: true)
             }

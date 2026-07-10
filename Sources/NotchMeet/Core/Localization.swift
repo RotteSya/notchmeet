@@ -24,6 +24,8 @@ enum RuntimeMessage: Equatable {
     case startupError
     case generationError
     case sttError
+    case creditLow        // 额度即将用完（录音继续，短暂提示后回到聆听态）
+    case creditExhausted  // 额度归零：会话已被停止，需要充值
 }
 
 enum CaptureHealthState {
@@ -86,12 +88,14 @@ struct AppStrings {
         case .thinking: return pick("思考中…", "考え中…")
         case .suggesting: return pick("生成建议中…", "提案中…")
         case .completed: return pick("完成", "完了")
-        case .apiKeyMissing: return pick("尚未设置 API Key（点击右侧设置）", "APIキー未設定（右側の設定から追加）")
+        case .apiKeyMissing: return pick("服务尚未开通（点击右侧设置激活）", "サービスが未開通です（右側の設定から有効化）")
         case .autoStopped: return pick("因长时间无发言已自动停止录音", "発言がないため録音を自動停止")
         case .bankGenerating: return pick("正在预生成回答…", "回答を事前生成中…")
         case .startupError: return pick("启动失败", "起動エラー")
         case .generationError: return pick("回答生成失败", "回答生成エラー")
         case .sttError: return pick("语音识别不可用", "音声認識が利用できません")
+        case .creditLow: return pick("额度即将用完——面试结束后记得充值", "残り時間わずか——面接後にチャージをお忘れなく")
+        case .creditExhausted: return pick("额度已用完，充值后即可继续使用", "残高がなくなりました。チャージすると続けて使えます")
         }
     }
 
@@ -104,10 +108,12 @@ struct AppStrings {
         case .thinking: return pick("整理问题", "質問を整理中")
         case .suggesting: return pick("生成回答", "回答を生成中")
         case .completed: return pick("可直接作答", "そのまま回答できます")
-        case .apiKeyMissing: return pick("需要设置 API Key", "APIキーが必要です")
+        case .apiKeyMissing: return pick("需要激活服务", "サービスの有効化が必要")
         case .autoStopped: return pick("已自动停止", "自動停止しました")
         case .bankGenerating: return pick("准备回答中", "回答を準備中")
         case .startupError, .generationError, .sttError: return pick("需要处理", "確認が必要です")
+        case .creditLow: return pick("额度即将用完", "残りわずか")
+        case .creditExhausted: return pick("额度已用完", "残高がありません")
         }
     }
 
@@ -115,6 +121,7 @@ struct AppStrings {
         pick("（回答生成失败：\(detail)）", "（回答生成エラー：\(detail)）")
     }
 
+    var copyAnswer: String { pick("拷贝回答", "回答をコピー") }
     var editMenu: String { pick("编辑", "編集") }
     var cut: String { pick("剪切", "切り取り") }
     var copy: String { pick("复制", "コピー") }
@@ -135,7 +142,7 @@ struct AppStrings {
     var stopRecording: String { pick("停止录音  ⌘⇧P", "録音を停止  ⌘⇧P") }
     var recordingStatusOn: String { pick("🔴 录音中（音频正在上传）", "🔴 録音中（音声を送信中）") }
     var recordingStatusOff: String { pick("⦿ 待机中（未录音 · 不上传）", "⦿ 待機中（未録音・送信なし）") }
-    var apiKeySettings: String { pick("API Key 设置", "API キー設定") }
+    var apiKeySettings: String { pick("自备服务密钥", "自分のサービスキー") }
     var buildAnswerBank: String { pick("预生成回答", "回答を事前生成") }
     var deleteLocalData: String { pick("删除本地数据…", "ローカルデータを削除…") }
     var toggleVisibility: String { pick("显示／隐藏  ⌘⇧Space", "表示／非表示  ⌘⇧Space") }
@@ -199,8 +206,8 @@ struct AppStrings {
         pick("确认删除全部本地数据？", "すべてのローカルデータを削除しますか？")
     }
     var deleteConfirmBody: String {
-        pick("将永久删除：面试原稿、答案库、简历事实，以及全部 API Key（Deepgram · Gemini · Anthropic · DeepSeek · 通义千问）。此操作不可撤销。",
-             "面接原稿、回答バンク、履歴書ファクト、およびすべての API キー（Deepgram・Gemini・Anthropic・DeepSeek・通義千問）を完全に削除します。この操作は取り消せません。")
+        pick("将永久删除：面试原稿、答案库、简历事实，以及全部服务密钥（Deepgram · Gemini · Anthropic · DeepSeek · 通义千问）。此操作不可撤销。",
+             "面接原稿、回答バンク、履歴書ファクト、およびすべてのサービスキー（Deepgram・Gemini・Anthropic・DeepSeek・通義千問）を完全に削除します。この操作は取り消せません。")
     }
 
     // MARK: Recording consent (data-use disclosure shown before the first recording)
@@ -227,7 +234,7 @@ struct AppStrings {
             录音期间：
             \(sttLine)
             \(ctxLine)
-            · 仅 API Key 保存在本机。
+            · 服务密钥只保存在本机。
 
             可随时在「设置 → 隐私与数据」中关闭发送简历／原稿，或更改要捕获的通话 App。
             """,
@@ -235,7 +242,7 @@ struct AppStrings {
             録音中：
             \(sttLine)
             \(ctxLine)
-            · API キーのみ端末内に保存されます。
+            ・サービスキーのみ端末内に保存されます。
 
             「設定 → プライバシー」でいつでも履歴書／原稿の送信をオフにしたり、取得する通話アプリを変更できます。
             """)
@@ -256,8 +263,8 @@ struct AppStrings {
 
     var privacyDataFlowTitle: String { pick("数据如何流动", "データの流れ") }
     var privacyDataFlowBody: String {
-        pick("录音期间，所选通话 App 的声音会实时转写：引擎为 Deepgram 时上传云端，为 Apple 本地（国内默认）时在本机离线完成、录音不上传。识别出的问题（默认连同你的简历要点与面试原稿）会发送给所选 AI（Gemini／Claude／DeepSeek／通义千问）生成回答。API Key 与本地文件仅保存在本机，不使用麦克风、摄像头或屏幕。",
-             "録音中、選択した通話アプリの音声はリアルタイムで文字起こしされます：エンジンが Deepgram の場合はクラウドに送信、Apple（オンデバイス）の場合は端末内で完結し音声は送信されません。認識された質問は（既定では履歴書メモと面接原稿とともに）選択した AI（Gemini／Claude／DeepSeek／通義千問）に送信され回答を生成します。API キーとローカルファイルは端末内にのみ保存され、マイク・カメラ・画面は使用しません。")
+        pick("录音期间，所选通话 App 的声音会实时转写：引擎为 Deepgram 时上传云端，为 Apple 本地（国内默认）时在本机离线完成、录音不上传。识别出的问题（默认连同你的简历要点与面试原稿）会发送给所选 AI（Gemini／Claude／DeepSeek／通义千问）生成回答。服务密钥与本地文件仅保存在本机，不使用麦克风、摄像头或屏幕。",
+             "録音中、選択した通話アプリの音声はリアルタイムで文字起こしされます：エンジンが Deepgram の場合はクラウドに送信、Apple（オンデバイス）の場合は端末内で完結し音声は送信されません。認識された質問は（既定では履歴書メモと面接原稿とともに）選択した AI（Gemini／Claude／DeepSeek／通義千問）に送信され回答を生成します。サービスキーとローカルファイルは端末内にのみ保存され、マイク・カメラ・画面は使用しません。")
     }
     var sendContextLabel: String { pick("把简历要点与原稿发送给 AI", "履歴書メモと原稿を AI に送信") }
     var sendContextHelp: String {
@@ -276,10 +283,36 @@ struct AppStrings {
     var openSettings: String { pick("打开设置…", "設定を開く…") }
     var secGeneral: String { pick("通用", "一般") }
     var secScripts: String { pick("面试原稿", "面接原稿") }
-    var secKeys: String { pick("API 密钥", "API キー") }
-    var secAnswer: String { pick("回答引擎", "回答エンジン") }
+    var secKeys: String { pick("自备密钥", "自分のキー") }
+    var secAnswer: String { pick("识别与回答", "認識と回答") }
     var secPrivacy: String { pick("隐私与数据", "プライバシー") }
     var secAbout: String { pick("关于", "概要") }
+
+    // MARK: 通用（可自定义项）
+
+    var launchAtLogin: String { pick("登录时自动启动", "ログイン時に自動起動") }
+    var launchAtLoginHelp: String {
+        pick("开机后自动在刘海待命。仅对安装在「应用程序」文件夹中的正式版生效。",
+             "起動後、ノッチで自動的に待機します。「アプリケーション」フォルダにインストールした版でのみ有効です。")
+    }
+    var answerTextSizeLabel: String { pick("刘海回答字号", "ノッチの文字サイズ") }
+    var answerTextSizeHelp: String {
+        pick("面试时回答文字的大小。调大更易扫读，调小可容纳更长的回答。",
+             "面接中に表示される回答文字の大きさ。大きいほど読みやすく、小さいほど長い回答が収まります。")
+    }
+    var answerSizeCompact: String { pick("紧凑", "コンパクト") }
+    var answerSizeStandard: String { pick("标准", "標準") }
+    var answerSizeLarge: String { pick("大字", "大きめ") }
+    var hotkeysTitle: String { pick("快捷键", "ショートカット") }
+    var hotkeyToggleVisibility: String { pick("显示／隐藏刘海", "ノッチの表示／非表示") }
+    var hotkeyToggleRecording: String { pick("开始／停止录音", "録音の開始／停止") }
+
+    // MARK: 自备密钥（高级 · BYO）
+
+    var byoIntro: String {
+        pick("高级选项：填入自己的服务密钥后将优先使用你的服务，且不消耗额度。留空则使用内置服务（按额度计）。",
+             "上級者向け：ご自身のサービスキーを入力すると、そちらが優先され、残高は消費されません。空欄の場合は内蔵サービスを使用します（残高を消費）。")
+    }
 
     var clearKey: String { pick("清除", "クリア") }
     var currentLLMLabel: String { pick("当前回答模型", "現在の回答モデル") }
@@ -330,6 +363,65 @@ struct AppStrings {
     }
     var deleteScriptConfirmBody: String {
         pick("此原稿将被永久删除，不可撤销。", "この原稿は完全に削除され、元に戻せません。")
+    }
+
+    // MARK: 额度（分钟制钱包）
+
+    var secWallet: String { pick("额度与充值", "残高とチャージ") }
+    var creditRemainingLabel: String { pick("剩余额度", "残り時間") }
+    var creditUsedLabel: String { pick("累计已用", "利用済み") }
+    var creditGrantedLabel: String { pick("累计获得", "累計チャージ") }
+    var creditNotMetered: String { pick("使用自己的密钥 · 不消耗额度", "ご自身のキーを使用中・残高は消費しません") }
+    /// 分钟粒度的额度展示（"73 分钟" / "1時間13分" 级别的展示留给钱包页；这里通用短格式）。
+    func creditMinutes(_ seconds: Int) -> String {
+        let m = seconds / 60
+        if seconds <= 0 { return pick("0 分钟", "0分") }
+        if m == 0 { return pick("不足 1 分钟", "1分未満") }
+        return pick("\(m) 分钟", "\(m)分")
+    }
+    /// 紧张时刻（<10 分钟）的 mm:ss 倒计时。
+    func creditCountdown(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+    var creditMenuTopUp: String { pick("额度与充值…", "残高とチャージ…") }
+    func creditLowAlert(_ minutes: Int) -> String {
+        pick("剩余额度不足 \(minutes) 分钟", "残り時間が\(minutes)分を切りました")
+    }
+    var creditExhaustedTitle: String { pick("额度已用完", "残高がなくなりました") }
+    var creditExhaustedBody: String {
+        pick("本场录音已停止。你的准备内容都还在——充值后即可继续使用。也可以在设置里填入自己的服务密钥（不消耗额度）。",
+             "録音を停止しました。準備した内容はそのまま残っています。チャージするとすぐに再開できます。設定でご自身のサービスキーを使うこともできます（残高は消費しません）。")
+    }
+    var creditCannotStartTitle: String { pick("额度不足，无法开始", "残高が足りないため開始できません") }
+    var creditCannotStartBody: String {
+        pick("当前剩余额度为 0。充值后即可开始录音；如果你有自己的服务密钥，也可以在设置中填入（不消耗额度）。",
+             "残り時間が0のため録音を開始できません。チャージすればすぐに開始できます。ご自身のサービスキーをお持ちの場合は設定から入力してください（残高は消費しません）。")
+    }
+    var creditTopUpAction: String { pick("去充值", "チャージする") }
+    var creditEnterCodeAction: String { pick("输入充值码…", "コードを入力…") }
+
+    // MARK: 钱包页（设置 → 额度与充值）
+
+    var walletUnitMinutes: String { pick("分钟", "分") }
+    var walletRedeemTitle: String { pick("兑换充值码", "チャージコードを使う") }
+    var walletRedeemPlaceholder: String { pick("粘贴你收到的充值码", "受け取ったコードを貼り付け") }
+    var walletRedeemButton: String { pick("兑换", "チャージ") }
+    func walletRedeemSuccess(_ minutes: Int) -> String {
+        pick("已到账 +\(minutes) 分钟", "+\(minutes)分 チャージしました")
+    }
+    var walletRedeemKeysApplied: String { pick("服务已激活", "サービスを有効化しました") }
+    var walletRedeemAlready: String { pick("这个码已经使用过了", "このコードは使用済みです") }
+    var walletRedeemExpired: String { pick("这个码已过期", "このコードは有効期限切れです") }
+    var walletRedeemInvalid: String {
+        pick("无法识别这个码——请确认复制完整", "コードを認識できません——全体をコピーしたかご確認ください")
+    }
+    var walletBuyTitle: String { pick("需要更多时间？", "時間が足りませんか？") }
+    var walletBuyBody: String {
+        pick("获取充值码后粘贴到上方，立即到账，永不过期。", "コードを入手して上に貼り付けるだけで、すぐに反映されます。有効期限はありません。")
+    }
+    var walletBuyButton: String { pick("获取充值码", "コードを入手") }
+    var walletGiftNote: String {
+        pick("新用户见面礼：60 分钟已自动到账。", "はじめての方へ：60分ぶんを自動でプレゼント済みです。")
     }
 
     var prepDescription: String {

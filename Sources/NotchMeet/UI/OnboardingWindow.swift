@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// First-launch onboarding. Five steps — welcome → import script → system-audio
-/// permission → live demo → done. Hosted in an NSWindow like `PrepWindowController`:
+/// First-launch onboarding. Seven steps — welcome → how-it-works → import script →
+/// system-audio permission → gift/activation → live demo → done. Hosted in an NSWindow:
 /// the app is an accessory (LSUIElement) with no Dock icon, so it can't take key focus
 /// as-is — flip to `.regular` while open, restore on close. The backdrop is a live Metal
 /// aurora (`AuroraBackground`); the demo drives the REAL notch and permission hits real TCC.

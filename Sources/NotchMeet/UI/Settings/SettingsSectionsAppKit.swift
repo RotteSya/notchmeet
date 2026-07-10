@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 // The five scrolling sections. Each binds to exactly the same data layer the SwiftUI build
 // did (Keychain via `Secrets`, `Settings`, `AppLanguageStore`) — only the presentation is
@@ -27,6 +28,8 @@ class SectionScroll: FlippedView {
 // MARK: - General
 
 final class GeneralSection: SectionScroll {
+    private var launchToggle: SKToggle?
+
     init() {
         super.init(frame: .zero)
         let s = self.s
@@ -36,11 +39,44 @@ final class GeneralSection: SectionScroll {
         }
         constrain(seg, width: 204, height: 30)
 
-        let title = SKBuild.pageTitle(s.uiLanguageSettings)
+        // 回答字号：即改即用——NotchType 渲染与量高同源，刘海下一帧就按新字号排。
+        let sizes = Settings.AnswerTextSize.allCases
+        let sizeSeg = SKSegmented(titles: [s.answerSizeCompact, s.answerSizeStandard, s.answerSizeLarge],
+                                  selected: sizes.firstIndex(of: Settings.answerTextSize) ?? 1) { idx in
+            Settings.answerTextSize = sizes[idx]
+        }
+        constrain(sizeSeg, width: 240, height: 30)
+
+        // 登录自启：SMAppService 需要正式 .app（应用程序文件夹）；开发运行注册会失败，
+        // 失败时把开关拨回去并写日志，不留「看起来开了其实没开」的假状态。
+        let launchToggle = SKToggle(isOn: SMAppService.mainApp.status == .enabled) { [weak self] on in
+            do {
+                if on { try SMAppService.mainApp.register() }
+                else { try SMAppService.mainApp.unregister() }
+            } catch {
+                NSLog("[general] launch-at-login %@ failed: %@", on ? "register" : "unregister",
+                      String(describing: error))
+                self?.launchToggle?.setOn(!on)
+            }
+        }
+        self.launchToggle = launchToggle
+        launchToggle.setAccessibilityLabel(s.launchAtLogin)
+
+        let hotkeyVis = SKText.label("⌘⇧Space", font: SK.mono(13, .medium), color: SK.ink)
+        let hotkeyRec = SKText.label("⌘⇧P", font: SK.mono(13, .medium), color: SK.ink)
+
+        let title = SKBuild.pageTitle(s.secGeneral)
         scroll.setRows([
             title,
             SKBuild.divider(),
             SKBuild.controlRow(s.uiLanguageSettings, control: seg, help: s.languageSummaryValue),
+            SKBuild.divider(),
+            SKBuild.controlRow(s.answerTextSizeLabel, control: sizeSeg, help: s.answerTextSizeHelp),
+            SKBuild.divider(),
+            SKBuild.controlRow(s.launchAtLogin, control: launchToggle, help: s.launchAtLoginHelp),
+            SKBuild.divider(),
+            SKBuild.controlRow(s.hotkeyToggleVisibility, control: hotkeyVis, help: nil, vPad: 14),
+            SKBuild.controlRow(s.hotkeyToggleRecording, control: hotkeyRec, help: nil, vPad: 14),
             SKBuild.divider(),
         ])
         scroll.gap(18, after: title)
@@ -55,18 +91,9 @@ final class KeysSection: SectionScroll {
     init(onKeysChanged: @escaping () -> Void) {
         super.init(frame: .zero)
         let s = self.s
-        let title = SKBuild.pageTitle(s.apiKeySettings)
+        let title = SKBuild.pageTitle(s.secKeys)
+        let intro = SKBuild.help(s.byoIntro, color: SK.secondary, size: 12)
         let help = SKBuild.help(s.apiKeyPrompt)
-
-        // STT 引擎三段选择器：切换后持久化并触发 reloadPipeline（重建 STT 客户端，无需重启）。
-        let engines: [SttEngine] = [.auto, .deepgram, .apple]
-        let seg = SKSegmented(titles: [s.sttEngineAuto, s.sttEngineDeepgram, s.sttEngineApple],
-                              selected: engines.firstIndex(of: Settings.sttEngine) ?? 0) { idx in
-            Settings.sttEngine = engines[idx]
-            onKeysChanged()
-        }
-        constrain(seg, width: 270, height: 30)
-        let engineRow = SKBuild.stackedControl(s.sttEngineLabel, control: seg, help: s.sttEngineHelp)
 
         let rows = [
             KeyRowView(label: s.speechRecognitionProvider, name: "DEEPGRAM_API_KEY", onChanged: onKeysChanged),
@@ -78,7 +105,7 @@ final class KeysSection: SectionScroll {
         keyRows = rows
         // A setup code (nmk1.…) pasted into any field fills every key at once — refresh all rows then.
         for row in rows { row.onCodeApplied = { [weak self] in self?.keyRows.forEach { $0.refreshFromStore() } } }
-        var stack: [NSView] = [title, SKBuild.divider(), engineRow]
+        var stack: [NSView] = [title, SKBuild.divider(), SKBuild.padded(intro, top: 16, bottom: 16)]
         for row in rows { stack += [SKBuild.divider(), row] }
         // 国内网络：Gemini/Claude 不可直连——提示配置域内 LLM Key（境外用户不显示，避免噪音）。
         if Settings.isLikelyInChina() { stack += [SKBuild.divider(), SKBuild.help(s.llmChinaHint)] }
@@ -198,7 +225,10 @@ final class KeyRowView: FlippedView {
         if let keys = SetupCode.decode(trimmed) {
             for (n, v) in keys {
                 let val = v.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !val.isEmpty { Secrets.set(n, val) }
+                if !val.isEmpty {
+                    Secrets.set(n, val)
+                    Settings.markKeyManaged(n, true)   // 码发放的 Key＝受管 → 计量
+                }
             }
             field.stringValue = ""
             onChanged()
@@ -206,6 +236,7 @@ final class KeyRowView: FlippedView {
             return
         }
         if trimmed.isEmpty { Secrets.delete(name) } else { Secrets.set(name, trimmed) }
+        Settings.markKeyManaged(name, false)   // 手输/清除＝自备（BYO）→ 不计量
         let was = isSet
         isSet = !trimmed.isEmpty
         refreshStatus(bounce: isSet && !was)
@@ -239,7 +270,7 @@ final class KeyRowView: FlippedView {
 final class AnswerSection: SectionScroll {
     private let spinner = NSProgressIndicator()
 
-    init(onBuildBank: @escaping () -> Void) {
+    init(onBuildBank: @escaping () -> Void, onEngineChanged: @escaping () -> Void) {
         super.init(frame: .zero)
         let s = self.s
 
@@ -247,6 +278,16 @@ final class AnswerSection: SectionScroll {
         let dot = SKLiveDot(active: configured)
         let modelName = SKText.label(currentLLM, font: SK.font(13, .medium), color: configured ? SK.ink : SK.secondary)
         let modelCluster = SKBuild.cluster([dot, modelName], spacing: 8)
+
+        // STT 引擎三段选择器：切换后持久化并触发 reloadPipeline（重建 STT 客户端，无需重启）。
+        let engines: [SttEngine] = [.auto, .deepgram, .apple]
+        let seg = SKSegmented(titles: [s.sttEngineAuto, s.sttEngineDeepgram, s.sttEngineApple],
+                              selected: engines.firstIndex(of: Settings.sttEngine) ?? 0) { idx in
+            Settings.sttEngine = engines[idx]
+            onEngineChanged()
+        }
+        constrain(seg, width: 270, height: 30)
+        let engineRow = SKBuild.stackedControl(s.sttEngineLabel, control: seg, help: s.sttEngineHelp)
 
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -265,6 +306,8 @@ final class AnswerSection: SectionScroll {
             title,
             SKBuild.divider(),
             SKBuild.controlRow(s.currentLLMLabel, control: modelCluster),
+            SKBuild.divider(),
+            engineRow,
             SKBuild.divider(),
             SKBuild.controlRow(s.buildAnswerBank, control: buildCluster),
             SKBuild.divider(),

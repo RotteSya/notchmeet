@@ -25,6 +25,12 @@ struct OBStrings {
     let keyCodeLabel, keyCodePh, keyCodeHelp: String   // STEP 3 — single activation-code entry
     // 就绪判定：国内网络下只有被墙端点（Gemini/Claude）的 Key 时的显性警告。
     let sumLLMBlocked, llmChinaFoot: String
+    // v2 — 工作原理步（三拍动画的标题与三块文案）。
+    let kHow, hHow, pHow: String
+    let howT1, howD1, howT2, howD2, howT3, howD3: String
+    // v2 — 见面礼步（出厂含受管服务时替代密钥步；到账动效 + 额度说明）。
+    let kGift, hGiftGranted, hGiftBalance, pGift, giftNote: String
+    let sumCreditLabel: String
 
     static func of(_ lang: UILanguage) -> OBStrings { lang == .ja ? ja : zh }
 
@@ -58,16 +64,25 @@ struct OBStrings {
         intentTag: "志望動機", demoQFormat: "%@について教えてください。", verbatim: "日语原稿",
         unitCount: "个", skipped: "已跳过", permUnset: "未设置",
         kKeys: "STEP 3 · 连接服务", hKeys: "粘贴激活码即可使用",
-        pKeys: "粘贴我们提供的激活码，无需自己准备 API Key。自带 Key 的用户可在「设置」中手动填写。",
+        pKeys: "粘贴激活码即可开通全部服务，不需要了解任何技术细节。自备服务密钥的用户可稍后在设置中填写。",
         keyReplacePh: "已连接 · 粘贴新 Key 可替换",
         keyRequired: "必填", keyConnected: "已连接", keyMissing: "待设置 · 必填",
-        keyPrivacy: "Key 仅存于本机钥匙串，绝不上传服务器。",
+        keyPrivacy: "激活信息只保存在本机钥匙串，绝不上传服务器。",
         doneHpending: "还差最后一步", donePpending: "完成下面标记「待设置」的项目，就能开始使用。",
-        sumDeepgramLabel: "语音识别 · Deepgram", sumLLMLabel: "回答生成 · AI",
+        sumDeepgramLabel: "语音识别", sumLLMLabel: "回答生成",
         btnFix: "去补齐设置", btnEnterAnyway: "仍然进入",
-        keyCodeLabel: "激活码", keyCodePh: "粘贴激活码", keyCodeHelp: "试用码由我们提供 · 自带 Key 请在设置中填写",
+        keyCodeLabel: "激活码", keyCodePh: "粘贴激活码", keyCodeHelp: "激活码可从官网获取 · 自备服务密钥的用户请稍后在设置中填写",
         sumLLMBlocked: "已连接 · 当前网络无法直连",
-        llmChinaFoot: "⚠️ 国内网络无法直连 Gemini／Claude，面试中会一直超时。请配置通义千问或 DeepSeek Key，App 会自动优先使用可直连的服务。"
+        llmChinaFoot: "⚠️ 国内网络无法直连 Gemini／Claude，面试中会一直超时。请配置通义千问或 DeepSeek Key，App 会自动优先使用可直连的服务。",
+        kHow: "工作原理", hHow: "你只管开口，其余交给刘海",
+        pHow: "面试全程无需碰键盘——一切都悄然发生在屏幕顶部。",
+        howT1: "面试官提问", howD1: "实时聆听通话里的声音",
+        howT2: "对准你的原稿", howD2: "听懂问题，找到你准备的回答",
+        howT3: "浮现在刘海", howD3: "可直接照念的回答，一秒即现",
+        kGift: "STEP 3 · 见面礼", hGiftGranted: "60 分钟，已到账", hGiftBalance: "你的可用额度",
+        pGift: "无需任何设置，装好即用。额度只在面试录音时消耗，用完可随时充值。",
+        giftNote: "自备服务密钥的用户不消耗额度",
+        sumCreditLabel: "可用额度"
     )
 
     static let ja = OBStrings(
@@ -100,15 +115,24 @@ struct OBStrings {
         intentTag: "志望動機", demoQFormat: "%@について教えてください。", verbatim: "原稿どおり",
         unitCount: "件", skipped: "スキップ", permUnset: "未設定",
         kKeys: "STEP 3 / 接続", hKeys: "コードを貼り付けるだけ",
-        pKeys: "お渡しするアクティベーションコードを貼り付けるだけ。API キーの用意は不要です。自分のキーを使う場合は設定から。",
+        pKeys: "アクティベーションコードを貼り付けるだけで、すべてのサービスが使えます。技術的な準備は一切不要です。ご自身のキーを使う場合はあとで設定から。",
         keyReplacePh: "接続済み · 新しいキーで置き換え可",
         keyRequired: "必須", keyConnected: "接続済み", keyMissing: "未設定 · 必須",
-        keyPrivacy: "キーは端末の Keychain にのみ保存され、送信されません。",
+        keyPrivacy: "アクティベーション情報は端末内にのみ保存され、送信されません。",
         doneHpending: "あと一歩で完了", donePpending: "下の「未設定」の項目を整えると、すぐに使えます。",
-        sumDeepgramLabel: "音声認識 · Deepgram", sumLLMLabel: "回答生成 · AI",
+        sumDeepgramLabel: "音声認識", sumLLMLabel: "回答生成",
         btnFix: "設定を完了する", btnEnterAnyway: "そのまま開始",
-        keyCodeLabel: "アクティベーションコード", keyCodePh: "コードを貼り付け", keyCodeHelp: "試用コードはこちらでお渡しします · 自分のキーは設定から",
+        keyCodeLabel: "アクティベーションコード", keyCodePh: "コードを貼り付け", keyCodeHelp: "コードは公式サイトから入手できます · ご自身のキーはあとで設定から",
         sumLLMBlocked: "接続済み · 現在のネットワークでは直接接続不可",
-        llmChinaFoot: "⚠️ 中国本土のネットワークでは Gemini／Claude に直接接続できず、面接中はタイムアウトし続けます。通義千問または DeepSeek のキーを設定すると、自動的に優先して使用されます。"
+        llmChinaFoot: "⚠️ 中国本土のネットワークでは Gemini／Claude に直接接続できず、面接中はタイムアウトし続けます。通義千問または DeepSeek のキーを設定すると、自動的に優先して使用されます。",
+        kHow: "しくみ", hHow: "話すことに集中。あとはノッチが",
+        pHow: "面接中にキーボードへ触れる必要はありません——すべては画面の上端で、静かに進みます。",
+        howT1: "面接官が質問", howD1: "通話の音声をリアルタイムで聞き取り",
+        howT2: "原稿と照合", howD2: "質問を理解し、用意した答えを見つける",
+        howT3: "ノッチに浮かぶ", howD3: "そのまま読める答えが、すっと現れる",
+        kGift: "STEP 3 / プレゼント", hGiftGranted: "60分ぶん、チャージ済み", hGiftBalance: "利用できる残り時間",
+        pGift: "設定は一切不要、このまま使えます。残高は面接の録音中だけ消費され、いつでもチャージできます。",
+        giftNote: "ご自身のサービスキーを使う場合、残高は消費されません",
+        sumCreditLabel: "残り時間"
     )
 }

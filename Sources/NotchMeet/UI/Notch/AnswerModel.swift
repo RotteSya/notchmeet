@@ -18,6 +18,9 @@ final class AnswerModel: ObservableObject {
     @Published var errorDetail: String?
     @Published var intentLabel = ""     // matched/predicted intent — glance-check against mis-match
     @Published var question = ""        // interviewer's question as recognized by STT — glance-check for mis-hearing
+    /// 剩余额度秒数；nil = 本场不计量（BYO/本地）→ 刘海不显示额度胶囊。
+    /// 只在计量会话进行中由 AppController 持续写入（每秒随扣费刷新）。
+    @Published var creditSeconds: Int?
 }
 
 /// Single display contract for the notch. Non-empty answers are returned byte-for-byte:
