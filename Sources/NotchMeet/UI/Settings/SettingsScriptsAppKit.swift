@@ -38,8 +38,16 @@ final class ScriptsSection: FlippedView {
         if ProcessInfo.processInfo.arguments.contains("--qa-editor") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 guard let self else { return }
-                if let id = store.activeID { self.showEditor(.existing(id: id)) }
-                else { self.showEditor(.new(name: "", text: "")) }
+                // FI_QA_EDITOR_FILE: open the paste-new editor prefilled from a file —
+                // visual QA of the import/normalize states without GUI typing.
+                if let file = ProcessInfo.processInfo.environment["FI_QA_EDITOR_FILE"],
+                   let text = try? String(contentsOfFile: file, encoding: .utf8) {
+                    self.showEditor(.new(name: "QA", text: text))
+                } else if let id = store.activeID {
+                    self.showEditor(.existing(id: id))
+                } else {
+                    self.showEditor(.new(name: "", text: ""))
+                }
             }
         }
         #endif
@@ -413,6 +421,10 @@ final class ScriptEditorView: FlippedView {
     private var well: SKTextWell!
     private var preview: NSTextField!
     private var saveBtn: SKButton!
+    private var aiBtn: SKButton!
+    private var normalizing = false
+    /// Keychain-backed; resolved once per editor session, not on every keystroke.
+    private lazy var llmAvailable = ScriptImporter.isLLMAvailable
 
     private var s: AppStrings { AppStrings(language: AppLanguageStore.shared.language) }
 
@@ -448,13 +460,23 @@ final class ScriptEditorView: FlippedView {
         preview = SKText.label("", font: SK.font(11, .medium), color: SK.tertiary)
         preview.translatesAutoresizingMaskIntoConstraints = false
         preview.maximumNumberOfLines = 2
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Offered only when the deterministic parse leaves most of the pasted text
+        // unrecognized (note-style docs). Segmentation only — answers stay verbatim.
+        aiBtn = SKButton(s.aiNormalize, systemImage: "wand.and.stars", kind: .plain) { [weak self] in
+            self?.runAINormalize()
+        }
+        let previewRow = NSStackView(views: [preview, SKBuild.spacer(), aiBtn])
+        previewRow.orientation = .horizontal; previewRow.alignment = .centerY; previewRow.spacing = 8
+        previewRow.translatesAutoresizingMaskIntoConstraints = false
 
         well = SKTextWell(monospaced: true)
         well.string = text
         well.translatesAutoresizingMaskIntoConstraints = false
         well.onChange = { [weak self] _ in self?.refreshPreview() }
 
-        [headerRow, nameField, desc, preview, well].forEach { addSubview($0) }
+        [headerRow, nameField, desc, previewRow, well].forEach { addSubview($0) }
         let inset: CGFloat = 32
         NSLayoutConstraint.activate([
             headerRow.topAnchor.constraint(equalTo: topAnchor, constant: 24),
@@ -470,11 +492,11 @@ final class ScriptEditorView: FlippedView {
             desc.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             desc.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
-            preview.topAnchor.constraint(equalTo: desc.bottomAnchor, constant: 10),
-            preview.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            preview.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            previewRow.topAnchor.constraint(equalTo: desc.bottomAnchor, constant: 10),
+            previewRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            previewRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
-            well.topAnchor.constraint(equalTo: preview.bottomAnchor, constant: 10),
+            well.topAnchor.constraint(equalTo: previewRow.bottomAnchor, constant: 10),
             well.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             well.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             well.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
@@ -486,11 +508,43 @@ final class ScriptEditorView: FlippedView {
 
     private func refreshPreview() {
         let p = parsed
-        let names = p.prefix(6).map(\.question).joined(separator: " / ")
-        let line = s.prepRecognition(count: p.count, names: names, hasMore: p.count > 6)
+        let coverage = ScriptImporter.coverage(of: p, in: well.string)
+        let needsAI = !well.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && coverage < ScriptImporter.goodCoverage
+        let line = needsAI && !normalizing
+            ? s.aiNormalizeHint
+            : s.prepRecognition(count: p.count,
+                                names: p.prefix(6).map(\.question).joined(separator: " / "),
+                                hasMore: p.count > 6)
         preview.attributedStringValue = SKText.attributed(line, font: SK.font(11, .medium),
                                                           color: p.isEmpty ? SK.tertiary : SK.accentHi)
         saveBtn.isEnabledFlag = !p.isEmpty
+        aiBtn.isHidden = !(needsAI && llmAvailable)
+        aiBtn.isEnabledFlag = !normalizing
+    }
+
+    /// Segmentation-only normalization: the rewritten well shows the canonical form the
+    /// user is about to save — answers copied verbatim from what they pasted.
+    private func runAINormalize() {
+        guard !normalizing else { return }
+        normalizing = true
+        refreshPreview()
+        let text = well.string
+        Task { [weak self] in
+            let result = await ScriptImporter.normalize(text)
+            await MainActor.run {
+                guard let self else { return }
+                self.normalizing = false
+                if result.usedLLM, !result.entries.isEmpty {
+                    self.well.string = ScriptImporter.conventionText(result.entries)
+                    self.refreshPreview()
+                } else {
+                    self.refreshPreview()
+                    self.preview.attributedStringValue = SKText.attributed(
+                        self.s.aiNormalizeFailed, font: SK.font(11, .medium), color: SK.tertiary)
+                }
+            }
+        }
     }
 
     private func commit() {

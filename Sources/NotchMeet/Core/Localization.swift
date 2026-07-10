@@ -337,6 +337,15 @@ struct AppStrings {
              "見出し・番号・「Q:」・質問文で自動的に区切ります（例:「# 自己紹介」「1. 志望動機」）。一致した質問では原稿をそのまま提示し、外れた場合は日本語回答の参考にします。")
     }
     var saveWithShortcut: String { pick("保存  ⌘S", "保存  ⌘S") }
+    var aiNormalize: String { pick("AI 整理格式", "AIで整形") }
+    var aiNormalizeHint: String {
+        pick("识别到的内容较少。可以用 AI 只做分段整理——答案文本保持逐字不变。",
+             "認識できた内容が少ないようです。AIで区切りだけ整えられます——回答の文面は一字も変わりません。")
+    }
+    var aiNormalizeFailed: String {
+        pick("无法自动整理。请按“# 问题 + 回答”的格式手动分段。",
+             "自動整形できませんでした。「# 質問 + 回答」の形で手動で区切ってください。")
+    }
     func prepRecognition(count: Int, names: String, hasMore: Bool) -> String {
         let suffix = hasMore ? " …" : ""
         if count == 0 { return pick("已识别：0 个问题", "認識：0 件") }
