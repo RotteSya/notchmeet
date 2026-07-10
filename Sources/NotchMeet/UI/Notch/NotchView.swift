@@ -13,6 +13,8 @@ final class NotchView: NSView {
 
     // Surface (fills the whole panel incl. the transparent shadow margin).
     private let surface = NotchSurfaceView()
+    // Interior light field (Metal) — the obsidian's living light, between body and content.
+    private let luma = NotchLumaView()
 
     // Collapsed bar.
     private let collapsedBar = FlippedContainer()
@@ -44,6 +46,8 @@ final class NotchView: NSView {
         return f
     }()
     private let intentChip = IntentChipView()
+    private let creditChip = CreditChipView()
+    /// Empty-state runtime message only（正文答案交给 `answerStream` 逐字诞生）。
     private let answerLabel: NSTextField = {
         let f = NotchView.makeLabel(size: 15, weight: .regular, color: NotchPalette.primary)
         f.isSelectable = true
@@ -52,8 +56,21 @@ final class NotchView: NSView {
         f.cell?.wraps = true
         return f
     }()
+    private let answerStream = StreamingAnswerView()
 
     private lazy var morph = DisplayTween(host: self, value: 0)
+    /// 几何专用的第二条 morph 通道：展开方向带弹簧过冲（圆角/内缩微微越过再落定），
+    /// 而 `morph` 继续用 out-cubic 驱动透明度交叉淡化——透明度过冲会让内容在
+    /// 中途的小卡片里提前全亮并溢出，所以两通道必须分离。
+    private lazy var geoMorph = DisplayTween(host: self, value: 0)
+    /// 新一轮问答的入场（0→1）：问题/意图行淡入 + 6pt 上浮，与答案的逐字诞生同拍。
+    private lazy var introTween = DisplayTween(host: self, value: 1)
+    /// 状态文字交叉淡化（0→0.5 旧字淡出，0.5→1 新字淡入），杜绝生硬换字。
+    private lazy var statusSwap = DisplayTween(host: self, value: 1)
+    private var displayedStatusText = ""
+    private var pendingStatusText = ""
+    private var lastQuestion = ""
+    private var lastAnswerCount = 0
     private var wasExpanded = false
     private var hovering = false
     private var trackingAreaRef: NSTrackingArea?
@@ -83,6 +100,7 @@ final class NotchView: NSView {
 
     private func build() {
         addSubview(surface)
+        addSubview(luma)
 
         recordHit.onClick = { [weak self] in self?.onToggleRecording() }
         recordHit.addSubview(collapsedStatus)
@@ -91,12 +109,24 @@ final class NotchView: NSView {
         collapsedBar.addSubview(collapsedSettings)
         addSubview(collapsedBar)
 
-        [headerStatus, headerREC, statusText, recordButton, settingsButton,
-         heardLabel, heardValue, intentChip, answerLabel].forEach { expandedContent.addSubview($0) }
+        [headerStatus, headerREC, statusText, creditChip, recordButton, settingsButton,
+         heardLabel, heardValue, intentChip, answerLabel, answerStream].forEach { expandedContent.addSubview($0) }
         addSubview(expandedContent)
         expandedContent.alphaValue = 0
 
         morph.onChange = { [weak self] _ in self?.applyLayout() }
+        geoMorph.onChange = { [weak self] _ in self?.applyLayout() }
+        introTween.onChange = { [weak self] _ in self?.applyLayout() }
+        statusSwap.onChange = { [weak self] v in self?.applyStatusSwap(v) }
+    }
+
+    /// 交叉淡化的换字点在中点：v<0.5 旧字淡出，v≥0.5 换新字淡入。
+    private func applyStatusSwap(_ v: CGFloat) {
+        if v >= 0.5, displayedStatusText != pendingStatusText {
+            displayedStatusText = pendingStatusText
+            statusText.stringValue = displayedStatusText
+        }
+        statusText.alphaValue = abs(v * 2 - 1)
     }
 
     private func observe() {
@@ -121,11 +151,25 @@ final class NotchView: NSView {
             mark.recording = model.recording
             mark.activity = activity
         }
+        luma.setState(model.status, recording: model.recording)
 
         collapsedREC.isHidden = !model.recording
         headerREC.isHidden = !model.recording
 
-        statusText.stringValue = s.notchStatus(model.message)
+        // 状态文字：交叉淡化换字，不生硬跳变。
+        let newStatus = s.notchStatus(model.message)
+        if newStatus != displayedStatusText && newStatus != pendingStatusText {
+            pendingStatusText = newStatus
+            if reduceMotion || displayedStatusText.isEmpty {
+                statusSwap.set(1)
+                displayedStatusText = newStatus
+                statusText.stringValue = newStatus
+                statusText.alphaValue = 1
+            } else {
+                statusSwap.set(0)
+                statusSwap.animate(to: 1, duration: 0.24)
+            }
+        }
 
         recordButton.update(systemName: model.recording ? "stop.fill" : "record.circle",
                             tint: model.recording ? NotchPalette.recording : NotchPalette.secondary,
@@ -136,18 +180,49 @@ final class NotchView: NSView {
         heardLabel.stringValue = s.heardLabel
         heardValue.stringValue = model.question
         intentChip.text = model.intentLabel
+        creditChip.update(seconds: model.creditSeconds, strings: s)
+
+        // 新一轮问答（识别出的问题变了）→ 问题/意图行入场动效，与答案逐字诞生同拍。
+        if model.question != lastQuestion {
+            let entering = !model.question.isEmpty
+            lastQuestion = model.question
+            if entering {
+                if reduceMotion { introTween.set(1) }
+                else { introTween.set(0); introTween.animate(to: 1, duration: 0.34) }
+            }
+        }
 
         let display = NotchPresentation.text(answer: model.answer, message: model.message,
                                              errorDetail: model.errorDetail, strings: s)
-        answerLabel.attributedStringValue = NotchType.answerString(display, empty: model.answer.isEmpty)
+        if model.answer.isEmpty {
+            answerLabel.isHidden = false
+            answerStream.isHidden = true
+            answerStream.setText("")
+            answerLabel.attributedStringValue = NotchType.answerString(display, empty: true)
+        } else {
+            answerLabel.isHidden = true
+            answerStream.isHidden = false
+            answerStream.setText(display)
+            // token 到达 → 光场里过一道涟漪（只在流式阶段，别的状态不闪）。
+            if model.status == .streaming, display.count > lastAnswerCount { luma.pulse() }
+        }
+        lastAnswerCount = display.count
         // 新しいターンの考え中、まだ前の答えを表示している間は薄く見せて「次が来る」ことを示す。
-        answerLabel.alphaValue = (model.status == .thinking && !model.answer.isEmpty) ? 0.45 : 1
+        answerStream.dimmed = model.status == .thinking && !model.answer.isEmpty
 
-        // Drive the morph from the model's expand state.
+        // Drive the morph from the model's expand state. 透明度通道（morph）恒为
+        // out-cubic；几何通道（geoMorph）展开时弹簧轻过冲、收起时同样安静收拢。
         if model.expanded != wasExpanded {
             wasExpanded = model.expanded
-            if reduceMotion { morph.set(model.expanded ? 1 : 0) }
-            else { morph.animate(to: model.expanded ? 1 : 0, duration: NotchPalette.morphDuration) }
+            let target: CGFloat = model.expanded ? 1 : 0
+            if reduceMotion {
+                morph.set(target)
+                geoMorph.set(target)
+            } else {
+                morph.animate(to: target, duration: NotchPalette.morphDuration)
+                geoMorph.ease = model.expanded ? NotchMotion.springSettle : NotchMotion.outCubic
+                geoMorph.animate(to: target, duration: NotchPalette.morphDuration)
+            }
         }
         applyLayout()
     }
@@ -162,19 +237,29 @@ final class NotchView: NSView {
     private func applyLayout() {
         let b = bounds
         guard b.width > 1 else { return }
+        // p：透明度/可见性通道，钳位（交叉淡化不可反相）。
+        // g：几何通道，允许弹簧过冲——过冲时卡片向内轻收 ~2pt、圆角明显变软再落定，
+        //    整块石板像软体一样着陆。圆角把过冲分量放大 2.5×（否则 10% 过冲在 11pt
+        //    的圆角差上只有半个点，感受不到）；内缩保持原幅度，窗口从不超出最终边界。
         let p = max(0, min(1, morph.value))
+        let g = max(0, geoMorph.value)
+        let gr = g <= 1 ? g : 1 + (g - 1) * 2.5   // radii-only amplified settle
 
         // Card inset: the transparent shadow margin grows in only as we expand (top stays flush).
-        let mH = NotchMetrics.shadowMarginH * p
-        let mB = NotchMetrics.shadowMarginBottom * p
+        let mH = NotchMetrics.shadowMarginH * g
+        let mB = NotchMetrics.shadowMarginBottom * g
         let card = CGRect(x: mH, y: 0, width: b.width - mH * 2, height: b.height - mB)
 
         surface.frame = b
         surface.cardRect = card
-        surface.topRadius = notchLerp(8, 11, p)
-        surface.bottomRadius = notchLerp(11, 22, p)
+        surface.topRadius = notchLerp(8, 11, gr)
+        surface.bottomRadius = notchLerp(11, 22, gr)
         surface.depth = p
         surface.showShadow = p > 0.001
+
+        luma.frame = b
+        luma.setSlab(cardRect: card, topRadius: notchLerp(8, 11, gr),
+                     bottomRadius: notchLerp(11, 22, gr), depth: p)
 
         collapsedBar.frame = card
         expandedContent.frame = card
@@ -215,6 +300,16 @@ final class NotchView: NSView {
         settingsButton.frame = CGRect(x: settingsX, y: rowCY - 12, width: 28, height: 24)
         recordButton.frame = CGRect(x: recordX, y: rowCY - 12, width: 28, height: 24)
 
+        // 额度胶囊：紧贴录音键左侧。计量中常显，安静不抢戏；额度紧张时自己变色。
+        var leftLimit = recordX
+        if !creditChip.isHidden {
+            let chipSize = creditChip.intrinsicContentSize
+            let chipX = recordX - 8 - chipSize.width
+            creditChip.frame = CGRect(x: chipX, y: rowCY - chipSize.height / 2,
+                                      width: chipSize.width, height: chipSize.height)
+            leftLimit = chipX
+        }
+
         headerStatus.frame = CGRect(x: 18, y: rowCY - 8, width: 16, height: 16)
         var cursor: CGFloat = 18 + 16 + 8
         if !headerREC.isHidden {
@@ -223,7 +318,7 @@ final class NotchView: NSView {
             headerREC.frame = CGRect(x: cursor, y: rowCY - recSize.height / 2, width: recSize.width, height: recSize.height)
             cursor += recSize.width + 8
         }
-        let textW = max(0, recordX - 12 - cursor)
+        let textW = max(0, leftLimit - 12 - cursor)
         let textH = statusText.intrinsicContentSize.height
         statusText.frame = CGRect(x: cursor, y: rowCY - textH / 2, width: textW, height: textH)
 
@@ -232,17 +327,23 @@ final class NotchView: NSView {
         let contentW = size.width - 40
         var y = headerTop + rowH + 8 + (model.answer.isEmpty ? 0 : 3)
 
+        // 新一轮入场：问题/意图行淡入 + 从下方 6pt 浮定（答案由逐字诞生自带入场）。
+        let intro = max(0, min(1, introTween.value))
+        let introDy = (1 - intro) * 6
+
         if !model.question.isEmpty {
             heardLabel.isHidden = false
             heardValue.isHidden = false
+            heardLabel.alphaValue = intro
+            heardValue.alphaValue = intro
             heardLabel.sizeToFit()
             let labelW = heardLabel.frame.width
             let labelH = heardLabel.frame.height
-            heardLabel.frame = CGRect(x: contentX, y: y, width: labelW, height: labelH)
+            heardLabel.frame = CGRect(x: contentX, y: y + introDy, width: labelW, height: labelH)
             let valueX = contentX + labelW + 6
             let valueW = max(0, contentW - labelW - 6)
             let valueH = min(measuredHeight(heardValue, width: valueW), 34) // ≤ 2 lines
-            heardValue.frame = CGRect(x: valueX, y: y, width: valueW, height: valueH)
+            heardValue.frame = CGRect(x: valueX, y: y + introDy, width: valueW, height: valueH)
             y += max(labelH, valueH) + 8
         } else {
             heardLabel.isHidden = true
@@ -251,16 +352,26 @@ final class NotchView: NSView {
 
         if !model.intentLabel.isEmpty {
             intentChip.isHidden = false
+            intentChip.alphaValue = intro
             let chipSize = intentChip.intrinsicContentSize
-            intentChip.frame = CGRect(x: contentX, y: y, width: chipSize.width, height: chipSize.height)
+            intentChip.frame = CGRect(x: contentX, y: y + introDy * 1.4, width: chipSize.width, height: chipSize.height)
             y += chipSize.height + 8
         } else {
             intentChip.isHidden = true
         }
 
-        let answerH = NotchType.answerHeight(answerLabel.attributedStringValue.string,
-                                             empty: model.answer.isEmpty, width: contentW)
-        answerLabel.frame = CGRect(x: contentX, y: y, width: contentW, height: answerH)
+        let display = model.answer.isEmpty ? answerLabel.attributedStringValue.string
+                                           : lastQuestionAnswerText()
+        let answerH = NotchType.answerHeight(display, empty: model.answer.isEmpty, width: contentW)
+        let answerFrame = CGRect(x: contentX, y: y, width: contentW, height: answerH)
+        answerLabel.frame = answerFrame
+        answerStream.frame = answerFrame
+    }
+
+    /// The exact string the stream view renders（与 refresh 里传给 setText 的同源）。
+    private func lastQuestionAnswerText() -> String {
+        NotchPresentation.text(answer: model.answer, message: model.message,
+                               errorDetail: model.errorDetail, strings: AppStrings.current)
     }
 
     private func measuredHeight(_ field: NSTextField, width: CGFloat) -> CGFloat {
@@ -347,6 +458,77 @@ private final class RecordHitView: NSView {
     override func mouseUp(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if bounds.contains(p) { onClick?() }
+    }
+}
+
+// MARK: - Credit chip
+
+/// 计量会话中的剩余额度：与 IntentChip 同族的安静胶囊，坐在录音键左侧。
+/// 余量充足时中性灰、只报分钟；≤10 分钟转琥珀并切到 mm:ss 实时倒计时；≤3 分钟转红。
+/// 颜色即信息——不闪不跳，紧张感全部交给色彩和秒针。
+final class CreditChipView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private var tint: NSColor = NotchPalette.secondary
+
+    private let hPad: CGFloat = 8
+    private let vPad: CGFloat = 3
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        label.backgroundColor = .clear
+        label.drawsBackground = false
+        label.isBordered = false
+        label.isEditable = false
+        label.lineBreakMode = .byClipping
+        addSubview(label)
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isFlipped: Bool { true }
+
+    func update(seconds: Int?, strings: AppStrings) {
+        guard let seconds else {
+            if !isHidden { isHidden = true }
+            return
+        }
+        isHidden = false
+        let urgent = seconds <= 600
+        tint = seconds <= 180 ? NotchPalette.recording
+             : (urgent ? NotchPalette.warning : NotchPalette.secondary)
+        let text = urgent ? strings.creditCountdown(seconds) : strings.creditMinutes(seconds)
+        label.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold),
+            .foregroundColor: tint,
+            .kern: 0.2,
+        ])
+        toolTip = "\(strings.creditRemainingLabel) \(strings.creditMinutes(seconds))"
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    private var labelSize: NSSize { label.cell?.cellSize ?? label.intrinsicContentSize }
+
+    override var intrinsicContentSize: NSSize {
+        let s = labelSize
+        return NSSize(width: ceil(s.width) + hPad * 2, height: ceil(s.height) + vPad * 2)
+    }
+
+    override func layout() {
+        super.layout()
+        let s = labelSize
+        label.frame = CGRect(x: hPad, y: (bounds.height - s.height) / 2,
+                             width: bounds.width - hPad * 2, height: s.height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds
+        let radius = r.height / 2
+        let cap = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        tint.withAlphaComponent(0.12).setFill(); cap.fill()
+        cap.lineWidth = 0.75
+        tint.withAlphaComponent(0.22).setStroke(); cap.stroke()
     }
 }
 

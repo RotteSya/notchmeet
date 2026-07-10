@@ -8,10 +8,20 @@ import QuartzCore
 /// smooth regardless of state churn during streaming. Drawn entirely with Core Graphics.
 final class NotchStatusMark: NSView {
     var status: AnswerModel.Status = .ready {
-        didSet { if status != oldValue { prevStatus = oldValue; statusChangedAt = CACurrentMediaTime(); needsDisplay = true } }
+        didSet {
+            if status != oldValue {
+                prevStatus = oldValue; statusChangedAt = CACurrentMediaTime()
+                needsDisplay = true; retuneClock()
+            }
+        }
     }
     var recording: Bool = false {
-        didSet { if recording != oldValue { recordingWasOn = oldValue; recordingChangedAt = CACurrentMediaTime(); needsDisplay = true } }
+        didSet {
+            if recording != oldValue {
+                recordingWasOn = oldValue; recordingChangedAt = CACurrentMediaTime()
+                needsDisplay = true; retuneClock()
+            }
+        }
     }
     var activity: Int = 0   // kept for call-site parity; motion is time-driven
 
@@ -33,22 +43,63 @@ final class NotchStatusMark: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: 16, height: 16) }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    // MARK: Display clock — runs only while on screen (and motion is allowed)
+    // MARK: Display clock — runs only while on screen (and motion is allowed),
+    // and only as fast as the current mark actually moves. A resident notch app must not
+    // burn 60 fps on a 0.7 Hz breathing dot: ready breathes at 20 fps, listening at 30,
+    // spinner/equalizer take the full clock, and the STATIC marks (✓ / !) stop it entirely
+    // once their crossfade has settled.
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { startLink() } else { stopLink() }
+        if window != nil { retuneClock() } else { stopLink() }
     }
 
-    private func startLink() {
-        guard link == nil, !reduceMotion else { return }
+    /// nil = nothing is moving → clock off.
+    private func desiredFPS(at t: CFTimeInterval) -> Float? {
+        let settle = NotchPalette.contentDuration + 0.05
+        if t - statusChangedAt < settle || t - recordingChangedAt < settle { return 60 }
+        switch status {
+        case .thinking, .streaming: return 60
+        case .listening: return 30
+        case .ready: return 20
+        case .presenting, .error: return nil
+        }
+    }
+
+    private func retuneClock() {
+        guard window != nil, !reduceMotion else { stopLink(); return }
+        guard let fps = desiredFPS(at: CACurrentMediaTime()) else {
+            // 静态符号：让过渡帧画完再停（tick 里会再判一次）。
+            link?.isPaused = false
+            startLinkIfNeeded()
+            return
+        }
+        startLinkIfNeeded()
+        link?.preferredFrameRateRange = CAFrameRateRange(minimum: max(10, fps - 10),
+                                                         maximum: fps, preferred: fps)
+        link?.isPaused = false
+    }
+
+    private func startLinkIfNeeded() {
+        guard link == nil else { return }
         let l = displayLink(target: self, selector: #selector(tick))
         l.add(to: .main, forMode: .common)
         link = l
     }
 
     private func stopLink() { link?.invalidate(); link = nil }
-    @objc private func tick() { needsDisplay = true }
+
+    @objc private func tick() {
+        needsDisplay = true
+        let t = CACurrentMediaTime()
+        if let fps = desiredFPS(at: t) {
+            link?.preferredFrameRateRange = CAFrameRateRange(minimum: max(10, fps - 10),
+                                                             maximum: fps, preferred: fps)
+        } else {
+            link?.isPaused = true   // 过渡已定格且当前符号静止 → 停钟
+        }
+    }
+
     deinit { link?.invalidate() }
 
     // MARK: Draw

@@ -21,6 +21,11 @@ enum Secrets {
     }
 
     static func get(_ key: String) -> String? {
+        #if DEBUG
+        // 视觉 QA：重新打包的二进制读 Keychain 会触发 ACL 密码弹框（签名不同）。
+        // FI_NO_KEYCHAIN=1 直接视为无 Key，QA 流程靠 FI_PROVISIONING 注入服务。
+        if ProcessInfo.processInfo.environment["FI_NO_KEYCHAIN"] == "1" { return nil }
+        #endif
         let q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

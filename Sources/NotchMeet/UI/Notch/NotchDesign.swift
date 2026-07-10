@@ -40,9 +40,28 @@ enum NotchPalette {
 
     // Motion durations (s). The single morph time is shared by the controller's panel-frame
     // animation and the view's radius/content tween so the whole instrument moves as one body.
-    static let morphDuration: CFTimeInterval   = 0.42
+    static let morphDuration: CFTimeInterval = {
+        #if DEBUG
+        // 视觉 QA：FI_SLOW_MORPH=1 把 morph 放慢到 2.4s，便于连拍逐帧检查过冲曲线。
+        if ProcessInfo.processInfo.environment["FI_SLOW_MORPH"] == "1" { return 2.4 }
+        #endif
+        return 0.42
+    }()
     static let contentDuration: CFTimeInterval = 0.18
     static let controlDuration: CFTimeInterval = 0.13
+}
+
+/// Shared easing curves.
+enum NotchMotion {
+    /// 展开方向的欠阻尼弹簧响应：一次 ~10% 的轻过冲后柔性落定（t=1 残差 <0.6%，
+    /// tween 结束时 snap 到位，肉眼不可见）。只用于**展开**——收起是安静的呼气，
+    /// 弹跳会显得轻浮，维持原 out-cubic。
+    static func springSettle(_ t: CGFloat) -> CGFloat {
+        1 - exp(-5.0 * t) * cos(7.0 * t)
+    }
+
+    /// 原 morph 曲线（收起方向沿用）。
+    static func outCubic(_ t: CGFloat) -> CGFloat { 1 - pow(1 - t, 3) }
 }
 
 /// Layout metrics shared between the controller (panel frame) and the view (content inset),
@@ -93,7 +112,8 @@ enum NotchType {
     static func answerString(_ text: String, empty: Bool) -> NSAttributedString {
         let p = NSMutableParagraphStyle()
         p.lineSpacing = empty ? 2 : 3
-        let font = NSFont.systemFont(ofSize: empty ? 13 : 15)
+        // 正文字号跟随用户设置（设置 → 通用 → 回答字号）；空态提示固定小号。
+        let font = NSFont.systemFont(ofSize: empty ? 13 : Settings.answerTextSize.points)
         return NSAttributedString(string: text, attributes: [
             .font: font,
             .paragraphStyle: p,
@@ -101,11 +121,28 @@ enum NotchType {
         ])
     }
 
+    /// Measure with a real NSTextField cell — NOT `boundingRect`: the field's cell wraps a
+    /// couple of points earlier than the raw text measurement, so long answers came out one
+    /// line short (last line truncated to "…" while the card showed slack below). Main-thread
+    /// only, same as both callers.
+    private static let measurer: NSTextField = {
+        let f = NSTextField(labelWithString: "")
+        f.maximumNumberOfLines = 0
+        f.lineBreakMode = .byWordWrapping
+        f.cell?.wraps = true
+        return f
+    }()
+
     static func answerHeight(_ text: String, empty: Bool, width: CGFloat) -> CGFloat {
-        ceil(answerString(text, empty: empty).boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        ).height)
+        // 非空答案由 StreamingAnswerView 用 CoreText 渲染 → 量高必须走同一个 framesetter。
+        if !empty { return StreamingAnswerView.measure(text, width: width) }
+        measurer.attributedStringValue = answerString(text, empty: empty)
+        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        let h = measurer.cell?.cellSize(forBounds: bounds).height
+            ?? answerString(text, empty: empty).boundingRect(
+                with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+        return ceil(h)
     }
 }
 

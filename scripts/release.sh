@@ -39,6 +39,16 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 
+# 1b. 受管服务配置（商业分发）：存在 ~/.notchmeet/provisioning.nmp（由
+#     `swift scripts/nmtool.swift provision` 生成，含内置服务 Key + 充值码验签公钥）
+#     则打进 .app —— 用户装完即用、额度计量生效。缺失时构建为 BYO 版并给出提示。
+if [ -f "$HOME/.notchmeet/provisioning.nmp" ]; then
+    cp "$HOME/.notchmeet/provisioning.nmp" "$APP/Contents/Resources/provisioning.nmp"
+    echo "bundled managed-service provisioning (credit metering active)"
+else
+    echo "WARNING: no ~/.notchmeet/provisioning.nmp — building a BYO-keys build (no bundled service)."
+fi
+
 # 2. Sign with Developer ID + hardened runtime (required for notarization) + secure timestamp
 #    + the audio-input entitlement (so the hardened app can still capture call-app audio).
 codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"

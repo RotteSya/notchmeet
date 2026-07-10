@@ -19,11 +19,14 @@ final class ControlPanel: NSObject {
         /// 国内网络 + 解析结果是被墙端点（Gemini/Claude）：LLM 行降级为 ⚠️ 并附提示。
         var llmChinaBlocked = false
         var screenShareGuard = false
+        /// 剩余额度秒数；nil = 本机全 BYO/本地（额度概念不适用，菜单不显示）。
+        var creditSeconds: Int?
         static let empty = Health()
     }
 
     var onToggleRecording: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onOpenWallet: (() -> Void)?
     var onManageScripts: (() -> Void)?
     /// Pick the script used for this interview (nil = none). Applied to the shared store.
     var onSelectScript: ((String?) -> Void)?
@@ -78,6 +81,11 @@ final class ControlPanel: NSObject {
                 addInfo(menu, "      \(t.llmChinaBlockedWarning)")
             }
             addInfo(menu, "   \(t.screenShareGuard)  \(h.screenShareGuard ? "✓" : "⚠️")")
+            // 额度行：受管服务的用户一眼看到还能面多久；<10 分钟标 ⚠️ 提醒面前充值。
+            if let credit = h.creditSeconds {
+                let mark = credit <= 0 ? "✗" : (credit <= 600 ? "⚠️" : "✓")
+                addInfo(menu, "   \(t.creditRemainingLabel)  \(mark) \(t.creditMinutes(credit))")
+            }
             menu.addItem(.separator())
         }
 
@@ -91,6 +99,7 @@ final class ControlPanel: NSObject {
         menu.addItem(.separator())
 
         add(menu, t.openSettings, #selector(openSettingsTapped))
+        add(menu, t.creditMenuTopUp, #selector(openWalletTapped))
         add(menu, t.toggleVisibility, #selector(noop))
         menu.addItem(.separator())
         add(menu, t.quit, #selector(quit))
@@ -132,6 +141,7 @@ final class ControlPanel: NSObject {
 
     @objc private func recordTapped() { toggleRecording() }
     @objc private func openSettingsTapped() { onOpenSettings?() }
+    @objc private func openWalletTapped() { onOpenWallet?() }
     @objc private func manageScriptsTapped() { onManageScripts?() }
     @objc private func scriptTapped(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }

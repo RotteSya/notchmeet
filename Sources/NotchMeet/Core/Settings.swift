@@ -24,6 +24,11 @@ enum LLMResolution: Equatable {
     case none
 }
 
+extension Notification.Name {
+    /// 外观类设置（如回答字号）变化：刘海据此重排/重绘。
+    static let nmAppearanceChanged = Notification.Name("nm.appearance.changed")
+}
+
 /// Runtime settings + key resolution. Keys come from Keychain first, then env (dev).
 enum Settings {
     /// The product currently supports Japanese interviews. This is deliberately
@@ -65,6 +70,26 @@ enum Settings {
         set {
             if let v = newValue, !v.isEmpty { UserDefaults.standard.set(v, forKey: "nm_capture_bundle_id") }
             else { UserDefaults.standard.removeObject(forKey: "nm_capture_bundle_id") }
+        }
+    }
+
+    /// 刘海回答字号（可自定义项）。测量与渲染共用 `NotchType`，改这里两边同步。
+    enum AnswerTextSize: String, CaseIterable {
+        case compact, standard, large
+        var points: CGFloat {
+            switch self {
+            case .compact: 13.5
+            case .standard: 15
+            case .large: 17.5
+            }
+        }
+    }
+
+    static var answerTextSize: AnswerTextSize {
+        get { AnswerTextSize(rawValue: UserDefaults.standard.string(forKey: "nm_answer_size") ?? "") ?? .standard }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "nm_answer_size")
+            NotificationCenter.default.post(name: .nmAppearanceChanged, object: nil)
         }
     }
 
@@ -112,11 +137,32 @@ enum Settings {
         inChina && (resolution == .gemini || resolution == .claude)
     }
 
-    /// Resolve an API key by name: Keychain → environment variable.
+    /// Resolve an API key by name: Keychain → environment variable → 出厂内置（受管服务）。
+    /// 用户手输/env 的 Key 永远优先于内置 Key——高级用户自带服务时用他们自己的。
     static func apiKey(_ name: String) -> String? {
         if let v = Secrets.get(name), !v.isEmpty { return v }
         if let v = ProcessInfo.processInfo.environment[name], !v.isEmpty { return v }
+        if let v = Provisioning.serviceKey(name) { return v }
         return nil
+    }
+
+    /// 当前生效的 `name` Key 是否为「受管」来源（出厂内置 / 激活码带入）——受管即计量
+    /// （见 `CreditPolicy`）。判定跟随 `apiKey` 的解析顺序，两者永不脱节：
+    /// - Keychain 命中 → 看激活码写入时打的受管标记（手输的没有标记 = BYO）。
+    /// - env 命中 → 开发/BYO，一律不计量。
+    /// - 内置命中 → 受管。
+    static func keyIsManaged(_ name: String) -> Bool {
+        if let v = Secrets.get(name), !v.isEmpty {
+            return UserDefaults.standard.bool(forKey: "nm_key_managed_\(name)")
+        }
+        if let v = ProcessInfo.processInfo.environment[name], !v.isEmpty { return false }
+        return Provisioning.serviceKey(name) != nil
+    }
+
+    /// 激活码写 Key 时标记受管；用户手输/清除时撤销标记（`KeyRowView` 调用）。
+    static func markKeyManaged(_ name: String, _ managed: Bool) {
+        if managed { UserDefaults.standard.set(true, forKey: "nm_key_managed_\(name)") }
+        else { UserDefaults.standard.removeObject(forKey: "nm_key_managed_\(name)") }
     }
 
     /// Drop UserDefaults keys left behind by removed features so upgraded installs

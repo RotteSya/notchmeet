@@ -23,7 +23,11 @@ enum LocalData {
                 try? fm.removeItem(atPath: dir + "/" + f)
             }
         }
-        for k in managedSecretKeys { Secrets.delete(k) }
+        for k in managedSecretKeys {
+            Secrets.delete(k)
+            Settings.markKeyManaged(k, false)   // Key 没了，受管标记也不能留
+        }
+        // 有意不动额度账本（com.notchmeet.credit）：删除隐私数据 ≠ 清空花钱买的余额。
         NSLog("[privacy] local data deleted")
     }
 }

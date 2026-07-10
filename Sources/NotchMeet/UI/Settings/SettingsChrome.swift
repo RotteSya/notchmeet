@@ -9,12 +9,13 @@ import Combine
 // MARK: - Sections
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, scripts, keys, answer, privacy, about
+    case general, wallet, scripts, answer, keys, privacy, about
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .general: "slider.horizontal.3"
+        case .wallet:  "hourglass"
         case .scripts: "doc.text"
         case .keys:    "key.fill"
         case .answer:  "sparkles"
@@ -26,6 +27,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     func title(_ s: AppStrings) -> String {
         switch self {
         case .general: s.secGeneral
+        case .wallet:  s.secWallet
         case .scripts: s.secScripts
         case .keys:    s.secKeys
         case .answer:  s.secAnswer
@@ -186,9 +188,10 @@ final class SettingsRoot: NSView {
     private func makeSection(_ section: SettingsSection) -> NSView {
         switch section {
         case .general: return GeneralSection()
+        case .wallet:  return WalletSection(onKeysChanged: onKeysChanged)
         case .scripts: return ScriptsSection(store: store)
         case .keys:    return KeysSection(onKeysChanged: onKeysChanged)
-        case .answer:  return AnswerSection(onBuildBank: onBuildBank)
+        case .answer:  return AnswerSection(onBuildBank: onBuildBank, onEngineChanged: onKeysChanged)
         case .privacy: return PrivacySection(onDeleteData: onDeleteData)
         case .about:   return AboutSection(onRerunOnboarding: onRerunOnboarding)
         }

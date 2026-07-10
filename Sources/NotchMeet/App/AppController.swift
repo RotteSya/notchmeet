@@ -20,9 +20,14 @@ final class AppController {
     private var captureStarted = false   // tap.start() succeeded & running (self-check)
     private var recording = false        // explicit session is live (tap + STT uploading)
     private var languageCancellable: AnyCancellable?
+    private let credit = CreditManager.shared
+    private var creditCancellables = Set<AnyCancellable>()
+    private var creditLowRevertWork: DispatchWorkItem?
 
     func start() {
         Settings.cleanupLegacyKeys()
+        credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
+        observeCredit()
         notch.show()
         installEditMenu()
         installControls()
@@ -40,6 +45,9 @@ final class AppController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.openSettings(section: SettingsSection(rawValue: raw))
             }
+        } else if ProcessInfo.processInfo.environment["FI_OPEN_ONBOARDING"] == "1" {
+            // 视觉 QA：不改动真实的 nm_onboarded 状态，直接打开引导流程。
+            openOnboarding()
         } else if !Settings.onboarded {
             openOnboarding()
         }
@@ -80,6 +88,7 @@ final class AppController {
         control.scriptsProvider = { [weak self] in (self?.scriptStore.all ?? [], self?.scriptStore.activeID) }
         control.onSelectScript = { [weak self] id in self?.scriptStore.setActive(id) }
         control.onOpenSettings = { [weak self] in self?.openSettings() }
+        control.onOpenWallet = { [weak self] in self?.openSettings(section: .wallet) }
         control.onManageScripts = { [weak self] in self?.openSettings(section: .scripts) }
         control.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
         HotKeyCenter.shared.register(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
@@ -141,6 +150,13 @@ final class AppController {
     /// Open the audio tap + STT socket and begin uploading the call-app channel.
     private func startRecording() {
         guard let stt, !recording else { return }
+        // 额度硬闸：本场会用到受管服务且余额为 0 → 不开始，引导充值。
+        // 全 BYO/本地的会话不经过这道闸（不计量的东西永远不拦）。
+        let metered = CreditPolicy.sessionIsMetered()
+        if metered, !credit.canStartMeteredSession {
+            presentCreditGateAlert()
+            return
+        }
         // Live pipeline only: capture/upload NOTHING until the user has seen and accepted
         // exactly what leaves the device (call-app audio → Deepgram; question/context → LLM).
         if audio != nil, !ensureRecordingConsent() { return }
@@ -155,6 +171,7 @@ final class AppController {
             try stt.start()
             recording = true
             turn?.paused = false
+            credit.beginSession(metered: metered)
             enterListening()
         } catch AudioError.noCallApp {
             audio?.stop(); inactivity.stop()
@@ -219,6 +236,7 @@ final class AppController {
         audio?.stop()
         stt?.stop()
         inactivity.stop()
+        credit.endSession()
         captureStarted = false
         recording = false
         turn?.paused = true   // drop any in-flight transcript so no answer pops up post-stop
@@ -232,6 +250,73 @@ final class AppController {
         NSLog("[app] auto-stop: no interviewer speech for %d s", Int(inactivity.seconds))
         stopRecording()
         notch.model.message = .autoStopped
+    }
+
+    // MARK: - 额度（计量 · 预警 · 拦截）
+
+    /// 余额/计量状态 → 刘海额度胶囊（仅计量会话中显示）；预警/耗尽 → 提示与停止。
+    private func observeCredit() {
+        credit.$balanceSeconds.combineLatest(credit.$meteringActive)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] balance, metering in
+                self?.notch.model.creditSeconds = metering ? balance : nil
+            }
+            .store(in: &creditCancellables)
+        credit.onAlert = { [weak self] alert in
+            DispatchQueue.main.async { self?.handleCreditAlert(alert) }
+        }
+    }
+
+    private func handleCreditAlert(_ alert: CreditManager.Alert) {
+        switch alert {
+        case .low:
+            // 轻提示：状态行短暂切到「额度即将用完」，几秒后回到聆听态。
+            // 具体剩余时间由额度胶囊的 mm:ss 倒计时持续显示，这里不打断面试。
+            guard recording else { return }
+            notch.model.message = .creditLow
+            creditLowRevertWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.recording, self.notch.model.message == .creditLow else { return }
+                self.notch.model.message = .listening
+            }
+            creditLowRevertWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+        case .exhausted:
+            guard recording else { return }
+            NSLog("[credit] exhausted — stopping session")
+            stopRecording()
+            notch.model.message = .creditExhausted
+            presentCreditExhaustedAlert()
+        }
+    }
+
+    /// 面试中途耗尽：已停止录音，给出最温和的下一步（内容都还在）。
+    private func presentCreditExhaustedAlert() {
+        let t = AppStrings.current
+        presentTopUpChoices(title: t.creditExhaustedTitle, body: t.creditExhaustedBody)
+    }
+
+    /// 开始前余额为 0：不进入录音，直接引导充值。
+    private func presentCreditGateAlert() {
+        let t = AppStrings.current
+        notch.model.message = .creditExhausted
+        presentTopUpChoices(title: t.creditCannotStartTitle, body: t.creditCannotStartBody)
+    }
+
+    private func presentTopUpChoices(title: String, body: String) {
+        let t = AppStrings.current
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: t.creditTopUpAction)      // 打开购买页
+        alert.addButton(withTitle: t.creditEnterCodeAction)  // 设置 → 额度与充值
+        alert.addButton(withTitle: t.cancel)
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: NSWorkspace.shared.open(Provisioning.buyURL)
+        case .alertSecondButtonReturn: openSettings(section: .wallet)
+        default: break
+        }
     }
 
     /// Snapshot for the status-bar self-check (PLAN §3 S1 readiness).
@@ -252,7 +337,9 @@ final class AppController {
         return .init(recording: recording, captureOK: captureOK, captureState: state,
                      sttConnected: stt?.isConnected ?? false, deepgramKey: dgKey, llm: llm,
                      llmChinaBlocked: ProviderRegistry.llmChinaBlocked(),
-                     screenShareGuard: notch.screenShareGuarded)
+                     screenShareGuard: notch.screenShareGuarded,
+                     // 只对「会被计量」的配置显示额度——全 BYO 的用户没有额度概念。
+                     creditSeconds: CreditPolicy.sessionIsMetered() ? credit.balanceSeconds : nil)
     }
 
     /// Warm the LLM HTTPS/H2 connection at arm time so the FIRST interview question doesn't
@@ -474,7 +561,10 @@ final class AppController {
         }
 
         let capture = AudioCaptureFactory.make()
-        capture.onPCM = { [weak sttc] pcm in sttc?.write(pcm) }
+        capture.onPCM = { [weak sttc] pcm in
+            VoiceLevelBus.shared.push(pcm16: pcm)   // 声级 → 刘海光场（听声起伏）
+            sttc?.write(pcm)
+        }
         // Faithful §4 T0: use the audio path's last-voiced time (≈ last phoneme).
         tm.latency.voicedClock = { [weak capture] in capture?.lastVoicedUptimeNs ?? 0 }
 
@@ -550,6 +640,11 @@ final class AppController {
         }
         if ["thinking", "streaming", "presenting", "overflow", "error"].contains(fixture) {
             model.question = "学生時代に力を入れたことを教えてください。"
+        }
+        // 视觉 QA：FI_UI_CREDIT=<剩余秒数> 在任意 fixture 上叠加额度胶囊
+        // （>600 中性、≤600 琥珀 mm:ss、≤180 红色）。
+        if let raw = ProcessInfo.processInfo.environment["FI_UI_CREDIT"], let sec = Int(raw) {
+            model.creditSeconds = sec
         }
     }
 }
