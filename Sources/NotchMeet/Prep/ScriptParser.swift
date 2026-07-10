@@ -11,7 +11,10 @@ enum ScriptParser {
         let lines = normalizedLines(text)
         var entries: [BankEntry] = []
         var heading: String?
+        var headingLevel: Int?          // ATX/Setext level of the current heading (nil = label/plain)
+        var parent: (text: String, level: Int)?   // empty ATX heading followed by deeper variants
         var buffer: [String] = []
+        let titleIndex = documentTitleIndex(lines)
 
         func append(question: String, answer: String) {
             let q = cleanQuestion(question)
@@ -21,12 +24,12 @@ enum ScriptParser {
                                      intent: q, question: q, answer: a, locked: true))
         }
 
-        func flush() {
+        func flush(quiet: Bool = false) {
             guard let heading else {
                 buffer.removeAll(keepingCapacity: true)
                 return
             }
-            if cleanAnswer(buffer.joined(separator: "\n")).isEmpty {
+            if !quiet, cleanAnswer(buffer.joined(separator: "\n")).isEmpty {
                 // Two headings in a row: usually the document title, but log it — a
                 // dropped heading with a real question would silently lose an entry.
                 NSLog("[parser] heading without answer dropped: %@", heading)
@@ -53,21 +56,70 @@ enum ScriptParser {
             // 逆質問の回答は準備した質問文そのもの — その中の質問行を新しい見出しに
             // 昇格させると項目が分裂する。明示的な見出し（#/ラベル）だけ許す。
             let allowUnlabelled = !(heading.map(isReverseQuestionTopic) ?? false)
-            if let newHeading = headingText(line,
-                                            nextLine: nextLine,
-                                            previousIsBlank: previousIsBlank,
-                                            allowUnlabelledQuestion: allowUnlabelled) {
-                flush()
-                heading = newHeading
+            if let found = headingText(line,
+                                       nextLine: nextLine,
+                                       previousIsBlank: previousIsBlank,
+                                       allowUnlabelledQuestion: allowUnlabelled) {
+                // The document title (single H1 over deeper sections) is not a Q&A entry;
+                // its buffer (metadata lines) is dropped with it.
+                if index == titleIndex {
+                    flush()
+                    heading = nil
+                    if isSetextUnderline(nextLine ?? "") { index += 1 }
+                    index += 1
+                    continue
+                }
+                // 「## 自己紹介」(空) → 「### 30秒版」「### 1分版」: variant sub-headings of
+                // an empty parent inherit its topic, or 自己紹介 becomes unreachable.
+                let composing = found.atxLevel != nil && heading != nil
+                    && cleanAnswer(buffer.joined(separator: "\n")).isEmpty
+                    && headingLevel != nil && found.atxLevel! > headingLevel!
+                if composing { parent = (heading!, headingLevel!) }
+                flush(quiet: composing)
+                if let level = found.atxLevel, let p = parent, level <= p.level { parent = nil }
+                if let level = found.atxLevel, let p = parent, level > p.level {
+                    heading = p.text + "・" + found.text
+                } else {
+                    heading = found.text
+                }
+                headingLevel = found.atxLevel ?? headingLevel
                 // The next line is a Setext underline (`---` / `===`), not answer text.
                 if let nextLine, isSetextUnderline(nextLine) { index += 1 }
-            } else if !isMarkdownSeparator(line) {
+            } else if !isMarkdownSeparator(line), !isKeywordMemo(line) {
                 buffer.append(line)
             }
             index += 1
         }
         flush()
         return entries
+    }
+
+    /// プロンプター用の備忘行（`▼キーワード: …`）— 読み上げ原稿には混ぜない。
+    private static func isKeywordMemo(_ line: String) -> Bool {
+        line.trimmed.hasPrefix("▼")
+    }
+
+    /// The integrated-doc convention opens with a single `# タイトル` above `##` sections;
+    /// that H1 (and its metadata lines) is a title, not a question — but only when it
+    /// does not itself read as a topic/question (`# 自己紹介` docs keep working).
+    private static func documentTitleIndex(_ lines: [String]) -> Int? {
+        var firstH1: (index: Int, text: String)?
+        var h1Count = 0
+        var hasDeeper = false
+        for (i, line) in lines.enumerated() {
+            guard let match = capture(line.trimmed, pattern: #"^(#{1,6})\s+(.+?)(?:\s+#+)?$"#,
+                                      group: 2),
+                  let hashes = capture(line.trimmed, pattern: #"^(#{1,6})\s"#) else { continue }
+            if hashes.count == 1 {
+                h1Count += 1
+                if firstH1 == nil { firstH1 = (i, match) }
+            } else {
+                hasDeeper = true
+            }
+        }
+        guard h1Count == 1, hasDeeper, let title = firstH1,
+              !isTopicOrQuestion(cleanQuestion(stripQuestionLabel(title.text))) else { return nil }
+        return title.index
     }
 
     // MARK: - Heading recognition
@@ -80,22 +132,25 @@ enum ScriptParser {
     private static func headingText(_ line: String,
                                     nextLine: String?,
                                     previousIsBlank: Bool,
-                                    allowUnlabelledQuestion: Bool = true) -> String? {
+                                    allowUnlabelledQuestion: Bool = true)
+        -> (text: String, atxLevel: Int?)? {
         var text = line.trimmed
         guard !text.isEmpty else { return nil }
 
         // Markdown ATX headings. Requiring whitespace after `#` avoids treating hashtags
-        // inside an answer as a new question. Q/深掘り labels inside the heading are
-        // stripped so the stored question is the actual question text.
+        // inside an answer as a new question. Q/深掘り labels and list numbers inside the
+        // heading are stripped so the stored question is the actual question text.
         if let match = capture(text, pattern: #"^#{1,6}\s+(.+?)(?:\s+#+)?$"#) {
-            return cleanQuestion(stripQuestionLabel(match))
+            let level = text.prefix(while: { $0 == "#" }).count
+            return (cleanQuestion(stripQuestionLabel(match)), level)
         }
 
         // Markdown Setext headings:
         //   志望動機
         //   --------
         if let nextLine, isSetextUnderline(nextLine), text.count <= 100 {
-            return cleanQuestion(stripQuestionLabel(text))
+            let level = nextLine.trimmed.first == "=" ? 1 : 2
+            return (cleanQuestion(stripQuestionLabel(text)), level)
         }
 
         text = unwrappedEmphasis(text)
@@ -103,7 +158,7 @@ enum ScriptParser {
         // Explicit Q / question / interviewer / follow-up labels, with optional numbers.
         for pattern in explicitPatterns {
             if let match = capture(text, pattern: pattern, caseInsensitive: true) {
-                return cleanQuestion(match)
+                return (cleanQuestion(match), nil)
             }
         }
 
@@ -111,27 +166,30 @@ enum ScriptParser {
         let wrappers: [(Character, Character)] = [("【", "】"), ("［", "］"), ("[", "]")]
         if let first = text.first, let last = text.last,
            wrappers.contains(where: { $0.0 == first && $0.1 == last }), text.count <= 100 {
-            return cleanQuestion(String(text.dropFirst().dropLast()))
+            return (cleanQuestion(String(text.dropFirst().dropLast())), nil)
         }
 
         // Numbered headings, but only when the remainder genuinely resembles a topic or
-        // question. This keeps `1. 売上を分析した` inside an answer intact.
+        // question. This keeps `1. 売上を分析した` inside an answer intact. The question
+        // branch respects allowUnlabelledQuestion: a 逆質問 answer IS a numbered list of
+        // questions and must not be split (実稿で5問が1断片に潰れた).
         if let match = capture(text,
                                pattern: #"^(?:[0-9０-９]{1,3}[.．、:：)）]|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])\s*(.+)$"#),
-           isTopicOrQuestion(match) {
-            return cleanQuestion(match)
+           isKnownTopic(match.trimmingCharacters(in: CharacterSet(charactersIn: ":：")))
+               || (allowUnlabelledQuestion && looksLikeQuestion(match)) {
+            return (cleanQuestion(match), nil)
         }
 
         // A short standalone canonical topic such as `志望動機` or `自己PR：`.
         let withoutTrailingColon = text.trimmingCharacters(in: CharacterSet(charactersIn: ":："))
         if isKnownTopic(withoutTrailingColon) {
-            return cleanQuestion(withoutTrailingColon)
+            return (cleanQuestion(withoutTrailingColon), nil)
         }
 
         // Finally accept an unlabelled question sentence when it starts a paragraph.
         // Paragraph position is an important false-positive guard for prose answers.
         if allowUnlabelledQuestion, previousIsBlank, text.count <= 120, looksLikeQuestion(text) {
-            return cleanQuestion(text)
+            return (cleanQuestion(text), nil)
         }
         return nil
     }
@@ -185,7 +243,12 @@ enum ScriptParser {
     ]
 
     private static func stripQuestionLabel(_ raw: String) -> String {
-        let text = unwrappedEmphasis(raw.trimmed)
+        var text = unwrappedEmphasis(raw.trimmed)
+        // `## 1. 自己紹介` — the list number is structure, not question text. Whitespace
+        // after the punctuation is required so `1.5倍成長` style openings stay intact.
+        if let match = capture(text, pattern: #"^[0-9０-９]{1,3}[.．、:：)）]\s+(.+)$"#) {
+            text = match
+        }
         for pattern in explicitPatterns {
             if let match = capture(text, pattern: pattern, caseInsensitive: true) { return match }
         }
@@ -227,10 +290,27 @@ enum ScriptParser {
     // MARK: - Small string helpers
 
     private static func normalizedLines(_ text: String) -> [String] {
-        text.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .replacingOccurrences(of: "\u{feff}", with: "")
             .components(separatedBy: "\n")
+        // Whole-line HTML comments (`<!-- … -->`, possibly spanning lines) are authoring
+        // notes, never Q&A content. Inline comments mixed with prose are left alone.
+        var out: [String] = []
+        var inComment = false
+        for line in lines {
+            let t = line.trimmed
+            if inComment {
+                if t.hasSuffix("-->") || t.contains("-->") { inComment = false }
+                continue
+            }
+            if t.hasPrefix("<!--") {
+                if !t.contains("-->") { inComment = true }
+                continue
+            }
+            out.append(line)
+        }
+        return out
     }
 
     private static func cleanQuestion(_ raw: String) -> String {
@@ -265,12 +345,13 @@ enum ScriptParser {
 
     private static func capture(_ text: String,
                                 pattern: String,
-                                caseInsensitive: Bool = false) -> String? {
+                                caseInsensitive: Bool = false,
+                                group: Int = 1) -> String? {
         let options: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
         guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
         let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = regex.firstMatch(in: text, range: fullRange), match.numberOfRanges > 1,
-              let range = Range(match.range(at: 1), in: text) else { return nil }
+        guard let match = regex.firstMatch(in: text, range: fullRange), match.numberOfRanges > group,
+              let range = Range(match.range(at: group), in: text) else { return nil }
         return String(text[range]).trimmed
     }
 
