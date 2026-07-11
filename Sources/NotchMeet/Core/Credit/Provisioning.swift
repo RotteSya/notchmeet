@@ -59,13 +59,14 @@ enum Provisioning {
     /// 让公开构建的用户拿到开发者手工发的充值码也能兑换。
     static var creditPublicKeyB64: String? { current.pub ?? defaultCreditPublicKeyB64 }
 
-    /// 编译期兜底公钥：scripts/nmtool gen-keys 生成后可填入；留空 = 无兜底。
-    static let defaultCreditPublicKeyB64: String? = nil
+    /// 编译期兜底公钥（2026-07-12 生成的正式签名密钥对；私钥在开发者本机 ~/.notchmeet/，
+    /// 官方服务端持同一私钥铸码）。有它在，即使无出厂配置的构建也能兑换官方充值码。
+    static let defaultCreditPublicKeyB64: String? = "25JYcx6pyZJ7sibm8YD+onxuRwqsAWdlgrdJ8pl2fLc="
 
-    /// 购买充值码的页面。
+    /// 购买充值码的页面（官方商店：Stripe 收款 → 即时发码）。
     static var buyURL: URL {
         if let s = current.buy, let u = URL(string: s) { return u }
-        return URL(string: "https://rottesya.github.io/notchmeet/")!
+        return URL(string: "https://notchmeet-store.vercel.app")!
     }
 
     /// 迎新赠礼秒数（默认 60 分钟）。
