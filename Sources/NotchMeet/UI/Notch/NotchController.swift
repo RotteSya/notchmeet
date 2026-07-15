@@ -65,7 +65,11 @@ final class NotchController {
 
     // MARK: - Geometry (NSScreen coords are bottom-left origin)
 
-    private var screen: NSScreen { NSScreen.main ?? NSScreen.screens.first! }
+    /// Prefer the built-in display that actually HAS the physical notch (non-zero safe-area top), so
+    /// the slab is never placed at the top-center of a notchless external monitor.
+    private var screen: NSScreen {
+        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first!
+    }
 
     /// Notch cutout width from the auxiliary top areas; falls back to a top-center
     /// slab on notchless Macs / external displays.
@@ -77,30 +81,41 @@ final class NotchController {
         return 200
     }
 
-    private var notchHeight: CGFloat { max(28, screen.safeAreaInsets.top) }
+    /// Height of the collapsed slab. The physical notch cutout's bottom aligns with the **menu-bar
+    /// bottom**, which on a notched display can be a point taller than the notch-safe inset (e.g.
+    /// 33pt chrome vs 32pt `safeAreaInsets.top`). Using the safe inset leaves the lower edge a hair
+    /// (2px) above the real cutout — a visible "short bottom". So take the true top-chrome height;
+    /// never shorter than the safe inset, and guard the menu-bar-auto-hide case (chrome → ~0).
+    private var notchHeight: CGFloat {
+        let s = screen
+        let safe = s.safeAreaInsets.top
+        guard safe > 0 else { return max(28, safe) }             // notchless display → 28 floor
+        let menuBar = s.frame.maxY - s.visibleFrame.maxY         // true top chrome (0 if auto-hidden)
+        return max(safe, menuBar)
+    }
+
+    /// Points-per-pixel of the target display; every panel edge is snapped to this grid so the
+    /// software slab fuses with the hardware notch instead of straddling a physical pixel.
+    private var backingScale: CGFloat { screen.backingScaleFactor }
+
+    /// The transparent extension on each side (collapsed) that seats the indicator + settings button
+    /// in the menu bar beside the cutout.
+    private let collapsedSideExtension: CGFloat = 60
 
     private func frame(expanded: Bool) -> NSRect {
-        let s = screen.frame
+        let m = NotchGeometry.Metrics(screenFrame: screen.frame, scale: backingScale,
+                                      notchWidth: notchWidth, notchHeight: notchHeight)
         if expanded {
             // The visible card is `expandedWidth × expandedHeight`; the panel itself is grown
             // by a transparent margin (sides + bottom, never the top) so the card can cast a
             // soft drop shadow without it being clipped at the panel edge.
-            let m = NotchMetrics.shadowMarginH
-            let mb = NotchMetrics.shadowMarginBottom
-            let cardW = expandedWidth
-            let cardH = expandedHeight()
-            let w = cardW + m * 2
-            let h = cardH + mb
-            return NSRect(x: (s.midX - cardW / 2 - m).rounded(), y: (s.maxY - h).rounded(),
-                          width: w.rounded(), height: h.rounded())
+            return NotchGeometry.expanded(m, cardWidth: expandedWidth, cardHeight: expandedHeight(),
+                                          marginH: NotchMetrics.shadowMarginH,
+                                          marginBottom: NotchMetrics.shadowMarginBottom)
         }
-        // Collapsed: extend to both sides of the notch so the indicator and settings
-        // button sit in the visible menu-bar space beside the physical cutout.
-        let sideExt: CGFloat = 60
-        let w = notchWidth + sideExt * 2
-        let h = notchHeight
-        let x = s.midX - notchWidth / 2 - sideExt
-        return NSRect(x: x.rounded(), y: (s.maxY - h).rounded(), width: w.rounded(), height: h.rounded())
+        // Collapsed: notch-region walls fused with the cutout, extended to BOTH sides so the
+        // indicator and settings button sit in the visible menu-bar space beside it.
+        return NotchGeometry.collapsed(m, sideExtension: collapsedSideExtension)
     }
 
     private func expandedHeight() -> CGFloat {
