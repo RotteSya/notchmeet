@@ -91,8 +91,15 @@ final class CreditManager: ObservableObject, ManagedFingerprintStore {
     /// App 启动时调用：出厂带受管服务的构建发放一次性迎新赠礼。
     /// 公开/开发构建（无内置服务）不发——赠 60 分钟却没有能用的服务只会造成困惑。
     func bootstrap() {
-        if Provisioning.hasService,
+        // 存量用户回填：账本说领过、日志还没有记录 → 补记，否则他们删一次钥匙串
+        // 仍能重领一次赠礼。
+        if ledger.state.welcomeGranted { RedemptionJournal.noteWelcomeGranted() }
+        for id in ledger.state.redeemedCodeIDs { RedemptionJournal.noteRedeemed(id) }
+
+        // 两处记录取并集：删掉 Keychain 账本不足以让迎新赠礼重新可领。
+        if Provisioning.hasService, !RedemptionJournal.welcomeGranted,
            ledger.grantWelcome(seconds: Provisioning.welcomeGiftSeconds) {
+            RedemptionJournal.noteWelcomeGranted()
             welcomeGrantedThisLaunch = true
             NSLog("[credit] welcome gift granted: %ds", Provisioning.welcomeGiftSeconds)
         }
@@ -120,6 +127,8 @@ final class CreditManager: ObservableObject, ManagedFingerprintStore {
         case .failure:
             return .invalid
         case .success(let payload):
+            // 第二处记录：账本被删也不能让旧码重放。任一处见过即拒绝。
+            guard !RedemptionJournal.hasRedeemed(payload.id) else { return .alreadyRedeemed }
             switch ledger.redeem(id: payload.id, seconds: payload.min * 60) {
             case .alreadyRedeemed:
                 return .alreadyRedeemed
@@ -129,7 +138,7 @@ final class CreditManager: ObservableObject, ManagedFingerprintStore {
                 NSLog("[credit] redeem %@ NOT persisted — reporting failure", payload.id)
                 return .storageFailed
             case .ok:
-                break
+                RedemptionJournal.noteRedeemed(payload.id)
             }
             var carriesKeys = false
             if let keys = payload.keys, !keys.isEmpty {

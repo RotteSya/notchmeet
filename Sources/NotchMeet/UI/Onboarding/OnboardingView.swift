@@ -685,6 +685,8 @@ struct OnboardingView: View {
             return
         }
         guard let keys = SetupCode.decode(raw) else { return }
+        // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+        guard SetupCode.confirmApply(keys) else { return }
         KeyProvisioner.apply(keys, managed: true)   // 码发放的 Key＝受管（计量）
         for (name, value) in keys where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true }

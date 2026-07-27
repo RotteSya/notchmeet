@@ -223,6 +223,8 @@ final class KeyRowView: FlippedView {
         // A pasted activation code (nmk1.…) carries every key at once: apply them all and let the
         // section refresh the sibling rows, instead of saving this single field.
         if let keys = SetupCode.decode(trimmed) {
+            // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+            guard SetupCode.confirmApply(keys) else { return }
             KeyProvisioner.apply(keys, managed: true)   // 码发放的 Key＝受管 → 计量
             field.stringValue = ""
             onChanged()

@@ -111,6 +111,8 @@ final class WalletSection: SectionScroll {
         case .notACode:
             // 兼容 nmk1 设置码（运维发放：只激活服务，不入账）。
             if let keys = SetupCode.decode(raw) {
+                // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+                guard SetupCode.confirmApply(keys) else { return }
                 KeyProvisioner.apply(keys, managed: true)
                 redeemField.stringValue = ""
                 showFeedback(s.walletRedeemKeysApplied, color: SK.accent)

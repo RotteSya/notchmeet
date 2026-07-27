@@ -43,7 +43,8 @@ enum LocalData {
             ManagedKeyRegistry.mark(k, value: nil, managed: false)   // Key 没了，受管登记也不能留
             if let still = Secrets.get(k), !still.isEmpty { failures.append(k) }
         }
-        // 有意不动额度账本（com.notchmeet.credit）：删除隐私数据 ≠ 清空花钱买的余额。
+        // 有意不动额度账本（com.notchmeet.credit）与兑换日志（.redemptions.json）：
+        // 删除隐私数据 ≠ 清空花钱买的余额，也不该把「这张码用过了」的记录一并抹掉。
         if failures.isEmpty {
             NSLog("[privacy] local data deleted")
         } else {
