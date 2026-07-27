@@ -94,6 +94,7 @@ final class AppController {
         control.onOpenWallet = { [weak self] in self?.openSettings(section: .wallet) }
         control.onManageScripts = { [weak self] in self?.openSettings(section: .scripts) }
         control.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
+        control.onToggleVisibility = { [weak self] in self?.notch.toggleVisibility() }
         HotKeyCenter.shared.register(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
             self?.notch.toggleVisibility()
         }
@@ -569,14 +570,24 @@ final class AppController {
         }
         sttc.onError = { [weak self] err in
             NSLog("[stt] error: %@", String(describing: err))
-            // Only terminal on-device errors (auth denied / no ja model) surface to the user;
-            // Deepgram's transient socket errors auto-retry and stay log-only (no error-flashing).
-            guard err is SttError else { return }
+            // Only terminal errors surface to the user; transient socket errors auto-retry
+            // and stay log-only (no error-flashing). Deepgram 的永久性故障现在会以
+            // `SttError.streamUnavailable` 抵达这里，因此不再被这道过滤器吞掉。
+            guard let sttErr = err as? SttError else { return }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.notch.model.status = .error
                 self.notch.model.message = .sttError
                 self.notch.model.errorDetail = err.localizedDescription
+                // 终态 STT 故障 = 这场会话不可能再产生转写。继续录音只会让用户白等，
+                // 计量会话还在按秒扣费——为一场 STT 从未工作的面试付钱。
+                if case .streamUnavailable = sttErr, self.recording {
+                    NSLog("[live] terminal STT failure — stopping session")
+                    self.stopRecording()
+                    self.notch.model.status = .error
+                    self.notch.model.message = .sttError
+                    self.notch.model.errorDetail = err.localizedDescription
+                }
             }
         }
 

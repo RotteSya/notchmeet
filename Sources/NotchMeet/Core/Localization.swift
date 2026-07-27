@@ -208,6 +208,21 @@ struct AppStrings {
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
     var ok: String { pick("好", "OK") }
+    var llmErrorMissingKey: String {
+        pick("没有可用的 API 密钥，请在设置里配置", "利用可能な API キーがありません。設定で登録してください")
+    }
+    func llmErrorAuth(_ code: Int) -> String {
+        pick("密钥无效或已被撤销（\(code)），请在设置里更新", "キーが無効か失効しています（\(code)）。設定で更新してください")
+    }
+    func llmErrorRateLimited(_ code: Int) -> String {
+        pick("服务繁忙（\(code)），稍等片刻会自动恢复", "サービスが混雑しています（\(code)）。少し待つと復旧します")
+    }
+    func llmErrorServer(_ code: Int) -> String {
+        pick("服务端故障（\(code)），已自动尝试备用服务", "サーバー側の障害です（\(code)）。予備のサービスを試しました")
+    }
+    func llmErrorGeneric(_ code: Int) -> String {
+        pick("请求失败（HTTP \(code)）", "リクエストに失敗しました（HTTP \(code)）")
+    }
     var deleteIncompleteTitle: String {
         pick("部分数据未能删除", "一部のデータを削除できませんでした")
     }
