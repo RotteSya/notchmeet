@@ -21,8 +21,20 @@ final class CreditEngineTests: XCTestCase {
     private let testKey = Curve25519.Signing.PrivateKey()
     private var testPubB64: String { testKey.publicKey.rawRepresentation.base64EncodedString() }
 
+    private var journalDir: String!
+
+    override func setUp() {
+        super.setUp()
+        // 兑换日志是第二处防重放记录，默认写 App Support。每个用例给它一个独立的
+        // 临时路径：否则状态会在用例间泄漏，也会污染开发机上的真实记录。
+        journalDir = NSTemporaryDirectory() + "nm-journal-\(UUID().uuidString)"
+        RedemptionJournal.overridePath = journalDir + "/.redemptions.json"
+    }
+
     override func tearDown() {
         Provisioning.overrideForTesting = nil
+        RedemptionJournal.overridePath = nil
+        if let journalDir { try? FileManager.default.removeItem(atPath: journalDir) }
         super.tearDown()
     }
 
