@@ -5,16 +5,24 @@ import Foundation
 /// backend as live generation — 国内即域内服务，避免 router 卡在被墙端点上超时。
 enum FastLLM {
     static func complete(system: String, user: String, maxTokens: Int = 600) async throws -> String {
-        switch ProviderRegistry.llmResolution() {
+        // 一次性解析 (resolution, key)。旧实现先由 llmResolution() 判断 key 存在，
+        // 再各自独立取值并 `!` 强制解包：两次读 Keychain 之间 key 被清除，或重签名后
+        // ACL 弹框被用户点「拒绝」，第二次读返回 nil —— 面试中直接崩溃。
+        let resolution = ProviderRegistry.llmResolution()
+        guard let keyName = ProviderRegistry.keyName(for: resolution),
+              let key = Settings.apiKey(keyName), !key.isEmpty else {
+            throw LLMError.missingKey
+        }
+        switch resolution {
         case .gemini:
-            return try await gemini(Settings.apiKey("GEMINI_API_KEY")!, system, user, maxTokens)
+            return try await gemini(key, system, user, maxTokens)
         case .claude:
-            return try await claude(Settings.apiKey("ANTHROPIC_API_KEY")!, system, user, maxTokens)
+            return try await claude(key, system, user, maxTokens)
         case .deepseek:
-            return try await OpenAIChat.complete(.deepseek, apiKey: Settings.apiKey("DEEPSEEK_API_KEY")!,
+            return try await OpenAIChat.complete(.deepseek, apiKey: key,
                                                  system: system, user: user, maxTokens: maxTokens)
         case .qwen:
-            return try await OpenAIChat.complete(.qwen, apiKey: Settings.apiKey("DASHSCOPE_API_KEY")!,
+            return try await OpenAIChat.complete(.qwen, apiKey: key,
                                                  system: system, user: user, maxTokens: maxTokens)
         case .none:
             throw LLMError.missingKey
