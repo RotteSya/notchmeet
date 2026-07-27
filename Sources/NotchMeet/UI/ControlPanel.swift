@@ -25,6 +25,9 @@ final class ControlPanel: NSObject {
     }
 
     var onToggleRecording: (() -> Void)?
+    /// 显示/隐藏刘海。此前这一项挂在空实现上：菜单可点、毫无反应，
+    /// 真正的实现只绑在热键（⌘⇧H）上。
+    var onToggleVisibility: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenWallet: (() -> Void)?
     var onManageScripts: (() -> Void)?
@@ -100,7 +103,7 @@ final class ControlPanel: NSObject {
 
         add(menu, t.openSettings, #selector(openSettingsTapped))
         add(menu, t.creditMenuTopUp, #selector(openWalletTapped))
-        add(menu, t.toggleVisibility, #selector(noop))
+        add(menu, t.toggleVisibility, #selector(toggleVisibilityTapped))
         menu.addItem(.separator())
         add(menu, t.quit, #selector(quit))
     }
@@ -148,7 +151,7 @@ final class ControlPanel: NSObject {
         onSelectScript?(id)
     }
     @objc private func scriptNoneTapped() { onSelectScript?(nil) }
-    @objc private func noop() {}
+    @objc private func toggleVisibilityTapped() { onToggleVisibility?() }
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
