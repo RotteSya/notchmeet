@@ -23,6 +23,31 @@ private final class ProcessBox: @unchecked Sendable {
     private var proc: Process?
     func set(_ p: Process) { lock.lock(); proc = p; lock.unlock() }
     func terminate() { lock.lock(); let p = proc; lock.unlock(); p?.terminate() }
+    var isRunning: Bool { lock.lock(); let p = proc; lock.unlock(); return p?.isRunning ?? false }
+}
+
+/// 增量收集子进程 stdout/stderr。readabilityHandler 在各自的线程上回调，
+/// 所以累积必须加锁。
+private final class OutputSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var out = Data()
+    private var err = Data()
+
+    func appendOut(_ d: Data) {
+        guard !d.isEmpty else { return }
+        lock.lock(); out.append(d); lock.unlock()
+    }
+
+    func appendErr(_ d: Data) {
+        guard !d.isEmpty else { return }
+        lock.lock(); err.append(d); lock.unlock()
+    }
+
+    func strings() -> (out: String, err: String) {
+        lock.lock(); defer { lock.unlock() }
+        return (String(data: out, encoding: .utf8) ?? "",
+                String(data: err, encoding: .utf8) ?? "")
+    }
 }
 
 /// Detects + runs local agent CLIs (claude / codex) for OFFLINE pre-generation only
@@ -31,6 +56,10 @@ private final class ProcessBox: @unchecked Sendable {
 /// Detection logic ported from NotchTutor's CLIRunner; run() is rewritten generic.
 enum CliRunner {
     private static let home = FileManager.default.homeDirectoryForCurrentUser.path
+    /// 单次调用的墙钟上限。CLI 可能因等待登录/网络而永远不返回，
+    /// 而 runPrep 的调用方会一直显示「正在预生成回答…」。
+    static let timeout: TimeInterval = 120
+    private static let timeoutQueue = DispatchQueue(label: "com.notchmeet.cli.timeout")
 
     static func candidateDirs() -> [String] {
         var dirs = [
@@ -108,16 +137,41 @@ enum CliRunner {
                 let o = Pipe(); let e = Pipe()
                 p.standardOutput = o; p.standardError = e
                 p.standardInput = FileHandle.nullDevice
+
+                // 增量读取。旧实现只在 terminationHandler 里 readDataToEndOfFile：
+                // CLI 输出一旦超过管道缓冲（64KB）写端就阻塞，子进程永不退出，
+                // terminationHandler 永不触发 —— 双向死锁，刘海永远停在「正在预生成」。
+                let sink = OutputSink()
+                o.fileHandleForReading.readabilityHandler = { h in
+                    let d = h.availableData
+                    if d.isEmpty { h.readabilityHandler = nil } else { sink.appendOut(d) }
+                }
+                e.fileHandleForReading.readabilityHandler = { h in
+                    let d = h.availableData
+                    if d.isEmpty { h.readabilityHandler = nil } else { sink.appendErr(d) }
+                }
+
                 p.terminationHandler = { proc in
-                    let out = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                    let err = String(data: e.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    o.fileHandleForReading.readabilityHandler = nil
+                    e.fileHandleForReading.readabilityHandler = nil
+                    // 收尾：取走管道里可能残留的最后一段。
+                    sink.appendOut(o.fileHandleForReading.availableData)
+                    sink.appendErr(e.fileHandleForReading.availableData)
+                    let (out, err) = sink.strings()
                     if proc.terminationStatus == 0 {
                         cont.resume(returning: out.trimmingCharacters(in: .whitespacesAndNewlines))
                     } else {
                         cont.resume(throwing: CliError.failed(err))
                     }
                 }
-                do { try p.run() } catch { cont.resume(throwing: error) }
+                do { try p.run() } catch { cont.resume(throwing: error); return }
+
+                // 超时兜底：CLI 卡住（等待登录/网络）时不能让调用方无限期挂起。
+                timeoutQueue.asyncAfter(deadline: .now() + timeout) { [weak box] in
+                    guard let box, box.isRunning else { return }
+                    NSLog("[cli] %@ exceeded %.0fs — terminating", cli, timeout)
+                    box.terminate()
+                }
             }
         } onCancel: {
             box.terminate()   // termination fires the handler → continuation resumes with .failed
