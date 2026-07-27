@@ -289,7 +289,17 @@ final class TurnManager: @unchecked Sendable {
     }
 
     private func runRouter(question: String, cands: [BankEntry], myEpoch: Int) async {
-        let decision = try? await router.route(question: question, candidates: cands)
+        let decision: RouteDecision? = await {
+            do {
+                return try await router.route(question: question, candidates: cands)
+            } catch {
+                // 旧实现是 `try?`：路由 LLM 持续 429 时，整场面试从不命中原稿、全走 live
+                // 生成，与「真的没匹配上」在现场完全无法区分——正是「答案不是我准备的
+                // 回答」类事故的诊断盲区。
+                NSLog("[router] route failed (turn %d): %@", myEpoch, String(describing: error))
+                return nil
+            }
+        }()
         await MainActor.run { [weak self] in
             guard let self, myEpoch == self.epoch else { return }
             guard let d = decision else { return }
@@ -376,7 +386,20 @@ final class TurnManager: @unchecked Sendable {
             model.message = .suggesting
         }
         guard liveIsCommittedSource else { return } // cache owns the turn
-        model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
+        let final = SpokenAnswerFormatter.normalize(liveBuffer)
+        guard !final.isEmpty else {
+            // provider 返回零内容（安全拦截/空补全）。旧实现照样 commit：刘海显示
+            // 「可直接作答」而正文空白——比明确报错更糟。
+            NSLog("[turn] live produced no usable text (turn %d)", myEpoch)
+            committedEpoch = -1
+            liveIsCommittedSource = false
+            model.answer = ""
+            model.status = .error
+            model.message = .generationError
+            model.errorDetail = AppStrings.current.answerEmpty
+            return
+        }
+        model.answer = final
         finishTurn(myEpoch)
     }
 
@@ -403,7 +426,21 @@ final class TurnManager: @unchecked Sendable {
     }
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
-        guard myEpoch == epoch, committedEpoch != myEpoch else { return }
+        guard myEpoch == epoch else { return }
+        guard committedEpoch != myEpoch else {
+            // 已经上屏之后才失败（网络中途断开）。旧实现在这里直接 return，回合永远停在
+            // .streaming：用户对着半截答案，状态行一直显示「生成中」，面板不折叠，
+            // 该回合也不进 history（下一问的深掘去重少一环），LatencyMonitor 还会漏账。
+            // 正确的收尾是把已有内容定格为完成态，并附上「可能不完整」的提示。
+            NSLog("[turn] stream failed after commit (turn %d): %@",
+                  myEpoch, String(describing: error))
+            if liveIsCommittedSource {
+                model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
+            }
+            model.errorDetail = AppStrings.current.answerMayBeIncomplete
+            finishTurn(myEpoch)
+            return
+        }
         model.answer = ""        // 未コミット → 残っている前ターンの答えを消し、エラーを見せる
         model.status = .error
         model.message = .generationError
