@@ -8,8 +8,14 @@ final class CreditEngineTests: XCTestCase {
     final class MemoryStore: CreditStore {
         var data: Data?
         var saves = 0
+        /// 模拟 Keychain 写失败（锁定/权限被拒），验证「写不进去就不能报成功」。
+        var failWrites = false
         func loadLedger() -> Data? { data }
-        func saveLedger(_ d: Data) { data = d; saves += 1 }
+        @discardableResult
+        func saveLedger(_ d: Data) -> Bool {
+            guard !failWrites else { return false }
+            data = d; saves += 1; return true
+        }
     }
 
     private let testKey = Curve25519.Signing.PrivateKey()

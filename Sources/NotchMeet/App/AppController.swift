@@ -105,7 +105,13 @@ final class AppController {
     /// (Re)start the pipeline per AppConfig + current keys. Called at launch and
     /// whenever keys change from the menu.
     private func reloadPipeline() {
+        // 录音中重载（设置页改 Key、钱包兑换带 Key 的码）必须走完整停止路径：
+        // 否则 credit.endSession() 被跳过，计量计时器失去 owner 继续每秒扣费，
+        // 而 `.exhausted` 又因 recording 已被置 false 而被吞掉 → 静默扣到清零。
+        // stopRecording 幂等，重复调用安全。
+        if recording { stopRecording() }
         stt?.stop(); audio?.stop(); inactivity.stop()
+        credit.endSession()   // 兜底：任何路径进来都保证表已停
         stt = nil; audio = nil; turn = nil; captureStarted = false; recording = false
         switch AppConfig.pipeline {
         case .demo:
@@ -282,11 +288,13 @@ final class AppController {
             creditLowRevertWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
         case .exhausted:
-            guard recording else { return }
+            // CreditManager 已自行停表；这里只负责把管线停下并告知用户。
+            // 不再 `guard recording` 提前返回——那正是「表还在走、通知被吞」的成因。
             NSLog("[credit] exhausted — stopping session")
-            stopRecording()
+            let wasRecording = recording
+            if wasRecording { stopRecording() }
             notch.model.message = .creditExhausted
-            presentCreditExhaustedAlert()
+            if wasRecording { presentCreditExhaustedAlert() }
         }
     }
 
