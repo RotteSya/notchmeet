@@ -208,6 +208,24 @@ struct AppStrings {
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
     var ok: String { pick("好", "OK") }
+    var setupCodeConfirmTitle: String {
+        pick("这张码会替换你的服务密钥", "このコードはサービスキーを置き換えます")
+    }
+    func setupCodeConfirmBody(_ keys: String) -> String {
+        pick("""
+             将写入以下服务的密钥：
+             \(keys)
+
+             之后你的面试音频与稿件内容会发送到这张码所属的服务账号。只有当这张码来自你信任的来源时才继续。
+             """,
+             """
+             次のサービスのキーが書き込まれます：
+             \(keys)
+
+             以降、面接音声と原稿の内容はこのコードのサービスアカウントへ送信されます。信頼できる入手元の場合のみ続行してください。
+             """)
+    }
+    var setupCodeConfirmApply: String { pick("我信任这张码", "このコードを信頼する") }
     var llmErrorMissingKey: String {
         pick("没有可用的 API 密钥，请在设置里配置", "利用可能な API キーがありません。設定で登録してください")
     }
