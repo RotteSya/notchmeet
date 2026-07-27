@@ -141,9 +141,12 @@ final class ScriptsSection: FlippedView {
                                       onCancel: { [weak self] in self?.showList(animated: true); self?.editing = false },
                                       onSave: { [weak self] newName, entries in
                                           guard let self else { return }
-                                          self.store.add(name: self.resolvedName(newName, entries: entries), entries: entries)
+                                          let saved = self.store.add(
+                                              name: self.resolvedName(newName, entries: entries),
+                                              entries: entries) != nil
                                           self.editing = false
                                           self.showList(animated: true)
+                                          if !saved { self.presentSaveFailure() }
                                       })
         case .existing(let id):
             let script = store.all.first { $0.id == id }
@@ -153,14 +156,26 @@ final class ScriptsSection: FlippedView {
                                       onCancel: { [weak self] in self?.showList(animated: true); self?.editing = false },
                                       onSave: { [weak self] newName, entries in
                                           guard let self else { return }
-                                          self.store.update(id: id, name: newName, entries: entries)
+                                          let saved = self.store.update(id: id, name: newName, entries: entries)
                                           self.editing = false
                                           self.showList(animated: true)
+                                          if !saved { self.presentSaveFailure() }
                                       })
         }
         crossfade(to: editor)
         listView = nil
         editorView = editor
+    }
+
+    /// 持久化失败必须让用户当场知道。旧实现只写 NSLog，UI 照常显示保存成功，
+    /// 用户重启后才发现稿件消失——这正是「稿件持久化全坏」事故的用户观感。
+    private func presentSaveFailure() {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = s.scriptSaveFailedTitle
+        alert.informativeText = s.scriptSaveFailedBody
+        alert.addButton(withTitle: s.ok)
+        if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
     }
 
     // MARK: Transitions
@@ -243,9 +258,17 @@ final class ScriptsSection: FlippedView {
         panel.allowedContentTypes = types
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url,
-           let content = try? String(contentsOf: url, encoding: .utf8) {
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let content = try TextFileReader.read(url)
             showEditor(.new(name: url.deletingPathExtension().lastPathComponent, text: content))
+        } catch {
+            // 旧实现在这里静默 no-op：用户选完文件什么都没发生，也没有错误。
+            let alert = NSAlert()
+            alert.messageText = s.importFailedTitle
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: s.ok)
+            if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
         }
     }
 
