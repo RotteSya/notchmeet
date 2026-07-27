@@ -106,6 +106,8 @@ final class WalletSection: SectionScroll {
             showFeedback(s.walletRedeemExpired, color: SK.warning)
         case .invalid:
             showFeedback(s.walletRedeemInvalid, color: SK.destructive)
+        case .storageFailed:
+            showFeedback(s.walletRedeemStorageFailed, color: SK.destructive)
         case .notACode:
             // 兼容 nmk1 设置码（运维发放：只激活服务，不入账）。
             if let keys = SetupCode.decode(raw) {
