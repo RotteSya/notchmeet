@@ -78,6 +78,8 @@ final class ScriptStorePersistenceTests: XCTestCase {
 }
 
 final class AnswerBankPersistenceTests: XCTestCase {
+    /// `replaceAll` 是主线程隔离的（与 TurnManager 的读同域），测试也走主线程。
+    @MainActor
     func testBankSurvivesRelaunch() {
         let dir = NSTemporaryDirectory() + "ab-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: dir) }

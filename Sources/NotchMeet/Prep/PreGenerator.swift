@@ -60,7 +60,7 @@ final class PreGenerator {
             NSLog("[prep] all %d intents failed — keeping existing answer bank", intents.count)
             return
         }
-        bank.replaceAll(out)
+        await bank.replaceAll(out)   // 主线程写：与 TurnManager 的读同域
         NSLog("[prep] answer bank built: %d/%d intents", out.count, intents.count)
     }
 
