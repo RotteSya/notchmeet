@@ -208,6 +208,14 @@ struct AppStrings {
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
     var ok: String { pick("好", "OK") }
+    /// 流式中途断开：已上屏的部分仍可用，但要诚实标注可能不完整。
+    var answerMayBeIncomplete: String {
+        pick("连接中断，这段回答可能不完整", "接続が切れました。この回答は途中までの可能性があります")
+    }
+    /// provider 返回了零内容（安全拦截 / 空补全）。
+    var answerEmpty: String {
+        pick("这次没能生成回答，请换个说法再试一次", "回答を生成できませんでした。言い方を変えて再度お試しください")
+    }
     var importFailedTitle: String { pick("没能读取这个文件", "このファイルを読み込めませんでした") }
     var importUnreadable: String {
         pick("无法打开文件——可能已被移动，或没有访问权限。",
