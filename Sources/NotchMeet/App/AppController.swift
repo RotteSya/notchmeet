@@ -34,6 +34,7 @@ final class AppController {
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
     private var creditLowRevertWork: DispatchWorkItem?
+    private var connectionKeepWarm: Timer?
 
     func start() {
         Settings.cleanupLegacyKeys()
@@ -127,6 +128,7 @@ final class AppController {
         if recording { stopRecording() }
         stt?.stop(); audio?.stop(); inactivity.stop()
         credit.endSession()   // 兜底：任何路径进来都保证表已停
+        stopConnectionKeepWarm()
         setRecording(false)
         stt = nil; audio = nil; turn = nil; captureStarted = false
         switch AppConfig.pipeline {
@@ -193,6 +195,7 @@ final class AppController {
             try stt.start()
             setRecording(true)
             credit.beginSession(metered: metered)
+            startConnectionKeepWarm()
             enterListening()
         } catch AudioError.noCallApp {
             audio?.stop(); inactivity.stop()
@@ -257,6 +260,7 @@ final class AppController {
         stt?.stop()
         inactivity.stop()
         credit.endSession()
+        stopConnectionKeepWarm()
         captureStarted = false
         setRecording(false)
         enterReady()
@@ -375,6 +379,29 @@ final class AppController {
             let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
             NSLog("[prewarm] LLM connection warmed in %dms", Int(ms))
         }
+    }
+
+    /// 会话期间的连接保温。
+    ///
+    /// 预热此前只在 arm 与 startRecording 各打一枪。面试官讲了几分钟题干之后，H2 连接
+    /// 已被服务端或 NAT 回收，下一问要重付 DNS + TLS + H2 建连——中国区跨运营商可达
+    /// 1s 以上，而它**必然**落在「对方讲了很久的那道复杂题」上，正是最不能超时的一问。
+    /// 每 60s 一发 1-token ping，不含任何用户数据。
+    private func startConnectionKeepWarm() {
+        connectionKeepWarm?.invalidate()
+        guard ProviderRegistry.llmResolution() != .none else { return }
+        let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.recording else { return }
+            self.prewarmLLM()
+        }
+        t.tolerance = 10
+        RunLoop.main.add(t, forMode: .common)
+        connectionKeepWarm = t
+    }
+
+    private func stopConnectionKeepWarm() {
+        connectionKeepWarm?.invalidate()
+        connectionKeepWarm = nil
     }
 
     private func makeRouter() -> Router {
