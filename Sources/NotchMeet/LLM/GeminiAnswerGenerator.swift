@@ -5,13 +5,13 @@ final class GeminiAnswerGenerator: AnswerGenerator {
     private let apiKey: String
     private let model: String
 
-    init(apiKey: String, model: String = "gemini-2.5-flash") {
+    init(apiKey: String, model: String = GeminiEndpoint.model) {
         self.apiKey = apiKey
         self.model = model
     }
 
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
-        let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse"
+        let urlStr = "\(GeminiEndpoint.host)/\(model):streamGenerateContent?alt=sse"
         guard let url = URL(string: urlStr) else { throw LLMError.badURL }
         let body: [String: Any] = [
             "systemInstruction": ["parts": [["text": Prompts.system(context: req.context)]]],
@@ -20,7 +20,7 @@ final class GeminiAnswerGenerator: AnswerGenerator {
             "generationConfig": ["temperature": 0.5, "maxOutputTokens": 512,
                                  "thinkingConfig": ["thinkingBudget": 0]],
         ]
-        let request = try LLMHTTP.post(url, headers: ["x-goog-api-key": apiKey], body: body)
+        let request = try LLMHTTP.post(url, headers: GeminiEndpoint.headers(apiKey), body: body)
         try await LLMHTTP.streamSSE(request, extract: Self.text, onDelta: onDelta)
     }
 

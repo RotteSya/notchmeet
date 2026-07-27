@@ -18,7 +18,18 @@ final class AppController {
     private let demoVoice = DemoVoice()
     private var demoUnpauseWork: DispatchWorkItem?
     private var captureStarted = false   // tap.start() succeeded & running (self-check)
-    private var recording = false        // explicit session is live (tap + STT uploading)
+    /// 「正在录音」这一个事实此前由四份状态分别维护（本字段、`notch.model.recording`、
+    /// `CreditManager.meteringActive`、反相语义的 `TurnManager.paused`），由五条
+    /// teardown 路径手工同步。漏一处的表现不是崩溃而是静默错账——F1 的静默扣费就是
+    /// 这么来的。现在统一经由 `setRecording(_:)` 变更，新增停止路径不可能再漏。
+    private(set) var recording = false   // explicit session is live (tap + STT uploading)
+
+    /// 录音状态的**唯一**写入口：一次调用把派生状态全部对齐。
+    private func setRecording(_ on: Bool) {
+        recording = on
+        notch.model.recording = on
+        turn?.paused = !on   // 停止时丢弃在途转录，避免停后还弹出答案
+    }
     private var languageCancellable: AnyCancellable?
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
@@ -116,7 +127,8 @@ final class AppController {
         if recording { stopRecording() }
         stt?.stop(); audio?.stop(); inactivity.stop()
         credit.endSession()   // 兜底：任何路径进来都保证表已停
-        stt = nil; audio = nil; turn = nil; captureStarted = false; recording = false
+        setRecording(false)
+        stt = nil; audio = nil; turn = nil; captureStarted = false
         switch AppConfig.pipeline {
         case .demo:
             runDemo()
@@ -179,21 +191,19 @@ final class AppController {
             // socket opens — we never start uploading when there is nothing to capture.
             if let audio { try audio.start(); captureStarted = true; inactivity.start() }
             try stt.start()
-            recording = true
-            turn?.paused = false
+            setRecording(true)
             credit.beginSession(metered: metered)
             enterListening()
         } catch AudioError.noCallApp {
             audio?.stop(); inactivity.stop()
-            captureStarted = false; recording = false
-            notch.model.recording = false
+            captureStarted = false
+            setRecording(false)
             enterReady()
             presentNoCallAppAlert()
         } catch {
             audio?.stop(); stt.stop(); inactivity.stop()
             captureStarted = false
-            recording = false
-            notch.model.recording = false
+            setRecording(false)
             NSLog("[live] start recording failed: %@", String(describing: error))
             notch.model.status = .error
             notch.model.message = .startupError
@@ -248,8 +258,7 @@ final class AppController {
         inactivity.stop()
         credit.endSession()
         captureStarted = false
-        recording = false
-        turn?.paused = true   // drop any in-flight transcript so no answer pops up post-stop
+        setRecording(false)
         enterReady()
     }
 
