@@ -669,11 +669,8 @@ struct OnboardingView: View {
             return
         }
         guard let keys = SetupCode.decode(raw) else { return }
-        for (name, value) in keys {
-            let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !v.isEmpty else { continue }
-            saveKey(name, v)
-            Settings.markKeyManaged(name, true)   // 码发放的 Key＝受管（计量）
+        KeyProvisioner.apply(keys, managed: true)   // 码发放的 Key＝受管（计量）
+        for (name, value) in keys where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true }
         }
         setupCode = ""

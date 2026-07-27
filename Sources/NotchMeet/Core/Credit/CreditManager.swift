@@ -29,7 +29,7 @@ enum CreditPolicy {
 
 /// 额度运行时：余额发布、迎新赠礼、充值码兑换、录音会话的秒级计量与预警。
 /// 主线程使用（与 AppController/UI 同域）；测试直接调 `tick()` 免等真实计时器。
-final class CreditManager: ObservableObject {
+final class CreditManager: ObservableObject, ManagedFingerprintStore {
     /// 视觉 QA 钩子：`FI_CREDIT_EPHEMERAL` 用内存账本替代真实 Keychain（绝不落盘），
     /// 值 `"fresh"` = 空账本（配合 FI_PROVISIONING 演出迎新赠礼），`"granted:used"`（秒）
     /// = 预置余额。仅影响本进程，正常启动完全走 Keychain。
@@ -132,14 +132,8 @@ final class CreditManager: ObservableObject {
                 break
             }
             var carriesKeys = false
-            if let keys = payload.keys {
-                for (name, value) in keys {
-                    let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !v.isEmpty else { continue }
-                    Secrets.set(name, v)
-                    Settings.markKeyManaged(name, true)
-                    carriesKeys = true
-                }
+            if let keys = payload.keys, !keys.isEmpty {
+                carriesKeys = KeyProvisioner.apply(keys, managed: true)
             }
             balanceSeconds = ledger.balanceSeconds
             NSLog("[credit] redeemed %@: +%d min", payload.id, payload.min)
