@@ -201,6 +201,24 @@ struct AppStrings {
     }
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
+    var ok: String { pick("好", "OK") }
+    var importFailedTitle: String { pick("没能读取这个文件", "このファイルを読み込めませんでした") }
+    var importUnreadable: String {
+        pick("无法打开文件——可能已被移动，或没有访问权限。",
+             "ファイルを開けませんでした——移動されたか、アクセス権がない可能性があります。")
+    }
+    var importUnknownEncoding: String {
+        pick("无法识别文件的文字编码。请用文本编辑器另存为 UTF-8 后重试，或直接复制粘贴正文。",
+             "文字エンコーディングを判別できませんでした。UTF-8 で保存し直すか、本文を直接貼り付けてください。")
+    }
+    /// 稿件没能落盘。这是本 app 最坏的失败：绝不能静默，也绝不能显示成功。
+    var scriptSaveFailedTitle: String {
+        pick("原稿没能保存", "原稿を保存できませんでした")
+    }
+    var scriptSaveFailedBody: String {
+        pick("这份原稿只存在于内存中，退出后会丢失。请检查磁盘空间与「文稿」访问权限后重试；先复制正文以免丢失。",
+             "この原稿はメモリ上にのみ存在し、終了すると失われます。ディスクの空き容量とアクセス権をご確認のうえ再試行してください。念のため本文をコピーしておいてください。")
+    }
     var deleteButton: String { pick("删除", "削除") }
     var deleteConfirmTitle: String {
         pick("确认删除全部本地数据？", "すべてのローカルデータを削除しますか？")
