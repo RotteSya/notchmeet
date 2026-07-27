@@ -37,8 +37,12 @@ enum Provisioning {
     }
 
     private static let cached: ProvisioningPayload = {
+        #if DEBUG
+        // 注入出厂配置会连带替换充值码验签公钥（见 `creditPublicKeyB64`）——在 release
+        // 中开放它等于允许任何人用自己的密钥对自铸充值码，并可直接读出内置 Key 明文。
         if let raw = ProcessInfo.processInfo.environment["FI_PROVISIONING"],
            let p = decode(raw) { return p }
+        #endif
         guard let url = Bundle.main.url(forResource: "provisioning", withExtension: "nmp"),
               let raw = try? String(contentsOf: url, encoding: .utf8),
               let p = decode(raw) else { return ProvisioningPayload() }

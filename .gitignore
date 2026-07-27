@@ -10,5 +10,7 @@ PLAN-MONETIZE.md
 docs/
 
 # 闭源引擎层：放在独立的私有仓库，故意不纳入本公开仓库。
-# 本地开发：把私有库 clone 到 Sources/notchmeet/Knowledge/ 再编译。
-Sources/notchmeet/Knowledge/
+# 本地开发：把私有库 clone 到 Sources/NotchMeet/Knowledge/ 再编译。
+# 大小写必须与磁盘一致：写错时本机靠 core.ignorecase=true 侥幸生效，
+# 在大小写敏感卷或 Linux CI 上 clone 后 `git add -A` 会把引擎推进公开仓库。
+Sources/NotchMeet/Knowledge/
