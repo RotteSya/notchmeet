@@ -33,23 +33,28 @@ final class CreditManager: ObservableObject {
     /// 视觉 QA 钩子：`FI_CREDIT_EPHEMERAL` 用内存账本替代真实 Keychain（绝不落盘），
     /// 值 `"fresh"` = 空账本（配合 FI_PROVISIONING 演出迎新赠礼），`"granted:used"`（秒）
     /// = 预置余额。仅影响本进程，正常启动完全走 Keychain。
+    ///
+    /// **仅 DEBUG 构建生效**：在 release 里开放它等于「一行环境变量换无限额度」，
+    /// 且照常使用出厂内置的受管 Key。门禁写法对齐 `Secrets.FI_NO_KEYCHAIN`。
     static let shared: CreditManager = {
-        guard let spec = ProcessInfo.processInfo.environment["FI_CREDIT_EPHEMERAL"] else {
-            return CreditManager()
+        #if DEBUG
+        if let spec = ProcessInfo.processInfo.environment["FI_CREDIT_EPHEMERAL"] {
+            final class Mem: CreditStore {
+                var d: Data?
+                func loadLedger() -> Data? { d }
+                func saveLedger(_ x: Data) { d = x }
+            }
+            let ledger = CreditLedger(store: Mem())
+            let parts = spec.split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2 {
+                ledger.grantWelcome(seconds: parts[0])
+                ledger.consume(seconds: parts[1])
+            }
+            NSLog("[credit] EPHEMERAL ledger (%@) — QA only", spec)
+            return CreditManager(ledger: ledger)
         }
-        final class Mem: CreditStore {
-            var d: Data?
-            func loadLedger() -> Data? { d }
-            func saveLedger(_ x: Data) { d = x }
-        }
-        let ledger = CreditLedger(store: Mem())
-        let parts = spec.split(separator: ":").compactMap { Int($0) }
-        if parts.count == 2 {
-            ledger.grantWelcome(seconds: parts[0])
-            ledger.consume(seconds: parts[1])
-        }
-        NSLog("[credit] EPHEMERAL ledger (%@) — QA only", spec)
-        return CreditManager(ledger: ledger)
+        #endif
+        return CreditManager()
     }()
 
     /// 剩余秒数（UI 以分钟展示）。
