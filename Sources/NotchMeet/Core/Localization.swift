@@ -208,6 +208,13 @@ struct AppStrings {
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
     var ok: String { pick("好", "OK") }
+    var deleteIncompleteTitle: String {
+        pick("部分数据未能删除", "一部のデータを削除できませんでした")
+    }
+    func deleteIncompleteBody(_ items: String) -> String {
+        pick("以下项目仍然存在，请手动检查：\(items)",
+             "次の項目が残っています。手動でご確認ください：\(items)")
+    }
     /// 流式中途断开：已上屏的部分仍可用，但要诚实标注可能不完整。
     var answerMayBeIncomplete: String {
         pick("连接中断，这段回答可能不完整", "接続が切れました。この回答は途中までの可能性があります")

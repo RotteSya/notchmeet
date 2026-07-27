@@ -380,8 +380,17 @@ final class AppController {
             s.onKeysChanged = { [weak self] in self?.reloadPipeline() }
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in
-                LocalData.deleteAll()
+                let failures = LocalData.deleteAll()
                 self?.facts.reload(); self?.bank.reload(); self?.scriptStore.reload(); self?.reloadPipeline()
+                // 「已删除」是一句隐私承诺，不能建立在被吞掉的错误上。
+                guard !failures.isEmpty else { return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = AppStrings.current.deleteIncompleteTitle
+                alert.informativeText = AppStrings.current.deleteIncompleteBody(
+                    failures.joined(separator: ", "))
+                alert.addButton(withTitle: AppStrings.current.ok)
+                alert.runModal()
             }
             s.onRerunOnboarding = { [weak self] in self?.openOnboarding() }
             settingsWindow = s
