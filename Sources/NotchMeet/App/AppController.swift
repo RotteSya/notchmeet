@@ -26,6 +26,9 @@ final class AppController {
 
     func start() {
         Settings.cleanupLegacyKeys()
+        // 受管标记 UserDefaults → Keychain 指纹的一次性迁移。必须在 bootstrap 之前：
+        // 之后的一切计费判定（CreditPolicy）都依赖指纹登记。
+        ManagedKeyRegistry.migrateLegacyFlagsIfNeeded()
         credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
         observeCredit()
         notch.show()
