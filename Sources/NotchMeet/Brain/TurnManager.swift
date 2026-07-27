@@ -189,7 +189,10 @@ final class TurnManager: @unchecked Sendable {
         let q = pendingQ.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingQ = ""
         guard !q.isEmpty, !paused else { return }
-        NSLog("[stt] Q: %@", q)
+        // 面试官问题原文只在显式开启 STT 调试时落日志。NSLog 默认 public，会进
+        // /var/db/diagnostics 保留数天，并随 sysdiagnose 一起外泄——而「删除本地数据」
+        // 清不掉系统日志。默认只记长度，足够诊断「有没有收到问题」。
+        if sttDebug { NSLog("[stt] Q: %@", q) } else { NSLog("[stt] Q received (%d chars)", q.count) }
         // Arm the recall-merge net only when committing a *statement*: a question that lands right
         // after should fold back in (layer 2). A completed question/request needs no net.
         lastCommittedQ = q
