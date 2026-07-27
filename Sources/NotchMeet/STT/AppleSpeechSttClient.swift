@@ -30,6 +30,9 @@ final class AppleSpeechSttClient: NSObject, SttClient {
     private var lastConf = 0.0
     private var generation = 0     // 轮转令牌：忽略旧任务的滞后回调
     private var started = false
+    /// 连续出错重启计数（正常轮换会清零）。用于退避与放弃阈值。
+    private var errorRestarts = 0
+    static let maxErrorRestarts = 5
     private var installing = false // 端侧资产下载进行中（防止重复发起安装请求）
 
     init(localeID: String = "ja-JP") {
@@ -57,6 +60,7 @@ final class AppleSpeechSttClient: NSObject, SttClient {
                     return
                 }
                 self.started = true
+                self.errorRestarts = 0   // 新会话：清掉上一场累积的失败计数
                 self.begin()
             }
         }
@@ -186,12 +190,14 @@ final class AppleSpeechSttClient: NSObject, SttClient {
                 onTranscript?(Transcript(text: text, isFinal: false, confidence: lastConf))
             }
         }
-        if error != nil, started { restart() }     // 任务出错 → 重启
+        if error != nil, started { restartAfterError() }   // 任务出错 → 退避重启
     }
 
     /// 端点/结束：把缓冲的一句作为 final emit，然后开一个新任务。
+    /// 这是**正常**轮换（识别到一句话结束），不退避。
     private func rotate() {
         emitFinal()
+        errorRestarts = 0
         restart()
     }
 
@@ -200,6 +206,33 @@ final class AppleSpeechSttClient: NSObject, SttClient {
         task?.cancel(); task = nil
         request = nil
         if started { begin() }
+    }
+
+    /// 出错后的重启：指数退避 + 失败上限。
+    ///
+    /// 旧实现直接 `restart()`：识别资产损坏或权限中途被收回时，任务一建即错，
+    /// 于是「建任务 → 出错 → 立刻再建」在串行队列上形成紧循环，烧满一个核、刷爆
+    /// 日志，而用户只看到风扇转起来、界面毫无反应。
+    private func restartAfterError() {
+        errorRestarts += 1
+        guard errorRestarts <= Self.maxErrorRestarts else {
+            NSLog("[stt-apple] %d consecutive task failures — giving up", errorRestarts)
+            started = false
+            task?.cancel(); task = nil
+            request = nil
+            onError?(SttError.onDeviceUnavailable)
+            return
+        }
+        let delay = min(0.2 * pow(2, Double(errorRestarts - 1)), 3.0)
+        NSLog("[stt-apple] task error — restarting in %.1fs (%d/%d)",
+              delay, errorRestarts, Self.maxErrorRestarts)
+        generation &+= 1
+        task?.cancel(); task = nil
+        request = nil
+        q.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.started else { return }
+            self.begin()
+        }
     }
 
     private func emitFinal() {
@@ -224,11 +257,17 @@ final class AppleSpeechSttClient: NSObject, SttClient {
 enum SttError: Error, LocalizedError {
     case notAuthorized
     case onDeviceUnavailable
+    /// 云端 STT 连接不可恢复（鉴权失败 / 额度耗尽 / 长时间无响应）。
+    /// 这类故障必须冒泡到刘海——静默无限重连会让用户盯着「聆听中」度过整场没有
+    /// 转写的面试。`detail` 是服务端/系统给出的具体原因。
+    case streamUnavailable(detail: String)
 
     var errorDescription: String? {
         switch self {
-        case .notAuthorized:      return AppStrings.current.sttNotAuthorized
+        case .notAuthorized:       return AppStrings.current.sttNotAuthorized
         case .onDeviceUnavailable: return AppStrings.current.sttLocalUnavailable
+        case .streamUnavailable(let detail):
+            return AppStrings.current.sttStreamUnavailable(detail)
         }
     }
 }

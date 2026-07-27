@@ -167,6 +167,12 @@ struct AppStrings {
         pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 NotchMeet。",
              "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で NotchMeet を許可してください。")
     }
+    /// 云端语音识别连不上且重连多次未果（Key 失效 / 额度耗尽 / 网络不通）。
+    /// 必须显性告知——否则用户会盯着「聆听中」度过整场没有转写的面试。
+    func sttStreamUnavailable(_ detail: String) -> String {
+        pick("语音识别服务连接失败，已停止重试。请检查网络与 Deepgram 密钥后重新开始。（\(detail)）",
+             "音声認識サービスに接続できず、再試行を停止しました。ネットワークと Deepgram キーをご確認のうえ、再度開始してください。（\(detail)）")
+    }
     /// 端侧日语语音模型按需下载中的进度提示（下载完成后自动开始识别）。
     func sttModelDownloading(_ percent: Int) -> String {
         pick("正在下载日语语音模型（\(percent)%）…完成后会自动开始识别。",
