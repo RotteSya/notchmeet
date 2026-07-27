@@ -84,6 +84,43 @@ final class CreditOwnershipTests: XCTestCase {
         XCTAssertEqual(store.saves, 0, "损坏的原始数据绝不能被覆盖")
     }
 
+    // MARK: - 防重放（第二处记录）
+
+    /// 删掉 Keychain 账本不得让已兑换的码重新可用。
+    /// 旧实现下 `security delete-generic-password -s com.notchmeet.credit` 就能让
+    /// 历史买过的每一张码再兑一次，迎新赠礼也能反复领。
+    func testDeletingTheKeychainLedgerDoesNotRevivedSpentCodes() {
+        let dir = NSTemporaryDirectory() + "nm-journal-\(UUID().uuidString)"
+        RedemptionJournal.overridePath = dir + "/.redemptions.json"
+        defer {
+            RedemptionJournal.overridePath = nil
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+
+        XCTAssertFalse(RedemptionJournal.hasRedeemed("code-X"))
+        RedemptionJournal.noteRedeemed("code-X")
+        XCTAssertTrue(RedemptionJournal.hasRedeemed("code-X"))
+
+        // 模拟「账本被整个删掉」：新建一个空 store 的账本，日志仍在。
+        let freshLedger = CreditLedger(store: CreditEngineTests.MemoryStore())
+        XCTAssertEqual(freshLedger.state.redeemedCodeIDs, [], "账本确实是空的")
+        XCTAssertTrue(RedemptionJournal.hasRedeemed("code-X"),
+                      "第二处记录必须幸存——这正是防重放的意义")
+    }
+
+    /// 迎新赠礼同理：日志记过就不能再发。
+    func testWelcomeGiftIsNotRegrantableAfterLedgerWipe() {
+        let dir = NSTemporaryDirectory() + "nm-journal-\(UUID().uuidString)"
+        RedemptionJournal.overridePath = dir + "/.redemptions.json"
+        defer {
+            RedemptionJournal.overridePath = nil
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        XCTAssertFalse(RedemptionJournal.welcomeGranted)
+        RedemptionJournal.noteWelcomeGranted()
+        XCTAssertTrue(RedemptionJournal.welcomeGranted)
+    }
+
     // MARK: - Schema 向前兼容（存量用户升级）
 
     /// 关键回归：Swift 合成的 Codable 解码器**不使用**属性默认值，缺键即抛错。

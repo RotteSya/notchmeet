@@ -13,7 +13,12 @@ import Foundation
 ///
 /// 真正的解法是在商店侧做一次性激活登记（code → 已兑换机器）；<20 人规模完全负担得起。
 enum RedemptionJournal {
+    /// 测试注入点：默认写 App Support。测试必须指向临时目录，否则会污染开发机的
+    /// 真实兑换记录，并在用例之间互相泄漏状态。
+    nonisolated(unsafe) static var overridePath: String?
+
     private static var path: String {
+        if let overridePath { return overridePath }
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?.path ?? NSTemporaryDirectory()

@@ -58,6 +58,7 @@ final class StreamingAnswerView: NSView {
         text = new
         births = next
         frameCache = nil
+        rebuildBirthTable()
         needsDisplay = true
         updateLink()
     }
@@ -89,13 +90,31 @@ final class StreamingAnswerView: NSView {
         ])
     }
 
+    /// 测量结果缓存。流式期每个 delta 都会经由 `NotchType.answerHeight` 走到这里，
+    /// 而每次都新建一个 framesetter 对**整串**答案重新排版 —— 累计是 O(n²)，
+    /// 并且全部发生在主线程上，与出生动画、面板动画抢同一条 runloop。
+    /// 键包含字号：设置里改字号后缓存自动失效。
+    private static var measureCache: [MeasureKey: CGFloat] = [:]
+    private struct MeasureKey: Hashable {
+        let text: String
+        let width: CGFloat
+        let pts: CGFloat
+    }
+
     static func measure(_ s: String, width: CGFloat) -> CGFloat {
         guard !s.isEmpty, width > 1 else { return 0 }
+        let key = MeasureKey(text: s, width: width, pts: Settings.answerTextSize.points)
+        if let hit = measureCache[key] { return hit }
         let setter = CTFramesetterCreateWithAttributedString(ctAttributed(s, font: font()))
         let size = CTFramesetterSuggestFrameSizeWithConstraints(
             setter, CFRange(location: 0, length: 0), nil,
             CGSize(width: width, height: .greatestFiniteMagnitude), nil)
-        return ceil(size.height)
+        let height = ceil(size.height)
+        // 流式期同一段文本会不断增长，缓存条目也随之增加；超过阈值整体丢弃，
+        // 下一轮重新填充（比 LRU 简单，且这里的重算成本本来就只有一次）。
+        if measureCache.count > 240 { measureCache.removeAll(keepingCapacity: true) }
+        measureCache[key] = height
+        return height
     }
 
     private func currentFrame() -> CTFrame? {
@@ -117,7 +136,7 @@ final class StreamingAnswerView: NSView {
         let now = CACurrentMediaTime()
         let ctFont = Self.font() as CTFont
         let baseColor = NotchPalette.primary
-        let utf16Births = Self.utf16BirthTable(text: text, births: births)
+        let utf16Births = birthTableCache
 
         // CT lays out y-up; the view is flipped (y-down). Flip once for the whole frame, then
         // shift the tall layout path so the first line sits at the view's top.
@@ -164,14 +183,21 @@ final class StreamingAnswerView: NSView {
 
     private func easeOut(_ t: CFTimeInterval) -> CGFloat { CGFloat(1 - pow(1 - t, 2.4)) }
 
-    private static func utf16BirthTable(text: String, births: [CFTimeInterval]) -> [CFTimeInterval] {
+    /// UTF-16 偏移 → 出生时刻。旧实现在**每一帧** draw 里全量重建，且每个字符
+    /// 都要 `String(ch)` 分配一次；日文长答案在 ProMotion 上是每秒数万次无谓分配。
+    /// 现在随 `setText` 增量维护（text/births 只在那里变）。
+    private var birthTableCache: [CFTimeInterval] = []
+
+    private func rebuildBirthTable() {
         var table: [CFTimeInterval] = []
         table.reserveCapacity(text.utf16.count)
         for (i, ch) in text.enumerated() {
             let b = i < births.count ? births[i] : -10
-            for _ in 0..<String(ch).utf16.count { table.append(b) }
+            // utf16 长度不需要建临时 String：直接问 unicodeScalars 的编码宽度。
+            let width = ch.unicodeScalars.reduce(0) { $0 + UTF16.width($1) }
+            for _ in 0..<width { table.append(b) }
         }
-        return table
+        birthTableCache = table
     }
 
     // MARK: - Animation clock (runs only while glyphs are being born)
@@ -184,8 +210,12 @@ final class StreamingAnswerView: NSView {
         if link == nil {
             let p = StreamProxy(self)
             proxy = p
-            link = displayLink(target: p, selector: #selector(StreamProxy.tick))
-            link?.add(to: .main, forMode: .common)
+            let l = displayLink(target: p, selector: #selector(StreamProxy.tick))
+            // 出生动画只有 180ms 的窗口，60fps 足够；不设上限时 ProMotion 会跑到
+            // 120Hz，长答案下每秒上万次逐字形 draw，流式中后段掉帧且明显耗电。
+            l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            l.add(to: .main, forMode: .common)
+            link = l
         }
         link?.isPaused = false
     }
