@@ -94,4 +94,34 @@ final class FallbackGeneratorTests: XCTestCase {
         XCTAssertTrue(result.error is CancellationError)
         XCTAssertEqual(secondary.calls, 0, "取消不得触发降级")
     }
+
+    /// URLSession 的取消是 URLError.cancelled(-999)，**不是** CancellationError。
+    /// 实测中原稿命中会走这条路（liveTask.cancel() → URLSession 取消），只认
+    /// CancellationError 的话每次缓存命中都会白烧一次次选 provider 的配额。
+    func testURLSessionCancellationIsNotRetried() async {
+        let primary = StubGenerator(failWith: URLError(.cancelled))
+        let secondary = StubGenerator(emit: ["不应出现"])
+        let chain = FallbackAnswerGenerator(chain: [primary, secondary])
+        let result = await run(chain)
+        XCTAssertEqual(secondary.calls, 0, "URLSession 取消同样不得触发降级")
+        XCTAssertNotNil(result.error)
+    }
+
+    /// 判定函数本身：两种取消都认，真实故障不认。
+    func testCancellationClassification() {
+        XCTAssertTrue(TurnManager.isCancellation(CancellationError()))
+        XCTAssertTrue(TurnManager.isCancellation(URLError(.cancelled)))
+        XCTAssertTrue(TurnManager.isCancellation(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
+
+        XCTAssertFalse(TurnManager.isCancellation(URLError(.timedOut)),
+                       "超时是真实故障，必须上报")
+        XCTAssertFalse(TurnManager.isCancellation(URLError(.notConnectedToInternet)),
+                       "断网是真实故障，必须上报")
+        XCTAssertFalse(TurnManager.isCancellation(LLMError.http(500)),
+                       "服务端错误是真实故障，必须上报")
+        // 同样是 -999，但域不同 → 不是 URLSession 的取消。
+        XCTAssertFalse(TurnManager.isCancellation(
+            NSError(domain: "SomeOtherDomain", code: NSURLErrorCancelled)))
+    }
 }

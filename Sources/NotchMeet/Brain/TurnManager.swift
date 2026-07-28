@@ -367,11 +367,24 @@ final class TurnManager: @unchecked Sendable {
                 }
             }
             await finishLive(myEpoch)
-        } catch is CancellationError {
+        } catch where Self.isCancellation(error) {
             // superseded — silent
         } catch {
             await failTurn(myEpoch, error: error)
         }
+    }
+
+    /// 取消不是故障。
+    ///
+    /// 这个区分是实测逼出来的：原稿命中时 `liveTask?.cancel()` 会取消 live 生成，
+    /// 而 **URLSession 用 `URLError.cancelled`(-999) 表达取消，不是 Swift 并发的
+    /// `CancellationError`**。只认后者的话，每一轮正常的缓存命中都会被当成「已提交后
+    /// 流中断」，给一条完好的逐字稿答案挂上「连接中断，这段回答可能不完整」的假警报。
+    /// 实测中 turn 5/6/7 连续三轮都命中了这条。
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
     }
 
     /// Never reveal an unstable half-sentence. Japanese sentence punctuation is the

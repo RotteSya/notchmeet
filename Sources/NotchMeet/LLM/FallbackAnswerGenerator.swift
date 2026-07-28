@@ -33,8 +33,10 @@ final class FallbackAnswerGenerator: AnswerGenerator {
                 }
                 return
             } catch {
-                // 用户切题/新一轮取消：不是 provider 的错，不要降级重试。
-                if error is CancellationError || Task.isCancelled { throw error }
+                // 取消（用户切题 / 缓存赢得竞速 / 新一轮取代）不是 provider 的错，
+                // 不要降级重试——否则每次原稿命中都会白烧一次次选 provider 的配额。
+                // URLSession 的取消是 URLError.cancelled(-999)，不是 CancellationError。
+                if TurnManager.isCancellation(error) || Task.isCancelled { throw error }
                 lastError = error
                 if produced {
                     NSLog("[llm] %@ failed mid-stream — not switching (text already on screen)",
