@@ -42,6 +42,8 @@ final class TurnManager: @unchecked Sendable {
     //       本題が来たら、そのターンを開き直して〔表明＋本題〕を1問として答え直す（armMerge）。
     private var pendingQ = ""
     private var settleWork: DispatchWorkItem?
+    /// 最后一个被接受的终稿到达时刻（uptime ns），供 LatencyMonitor 拆分端点延迟。
+    private var lastFinalNs: UInt64 = 0
     /// 完了した質問・依頼（…か／？／…ください）だけ、この短い静寂で確定＝即答する。実面接の端末内
     /// 計測では質問の途中に入る息継ぎは 0.5〜0.8s なので、0.8s ならそれを跨がずに最速で出せる。
     /// ただの陳述文はここでは確定しない（settleWindowMax を使う）。FI_SETTLE_MS（ミリ秒）で上書き可。
@@ -112,6 +114,9 @@ final class TurnManager: @unchecked Sendable {
         }
         // S2: see exactly what the interviewer's speech was recognized as (+confidence).
         if sttDebug { NSLog("[stt] final(%.2f): %@", t.confidence, q) }
+        // 终稿到达时刻 —— 延迟拆分用。它把「等 STT 交付」与「我们 settle 等待」分开：
+        // 只看合并后的端点延迟时，一次 4.5s 无法区分该调窗口还是该查网络。
+        lastFinalNs = DispatchTime.now().uptimeNanoseconds
         // Layer 2 (recall-merge): the previous turn committed only a statement (setup) and the
         // interviewer has continued within the grace window → reopen that turn so the answer sees the
         // whole question, not just the tail. startTurn (fired by settle below) then supersedes the
@@ -239,7 +244,7 @@ final class TurnManager: @unchecked Sendable {
         state = .generating
         liveBuffer = ""
         liveIsCommittedSource = false
-        latency.turnStart(myEpoch)
+        latency.turnStart(myEpoch, sttFinalNs: lastFinalNs)
 
         // 前ターンの答えはここでは消さない。新しい答えの先頭文が確定するまで（runRouter / runLive の
         // コミット点で上書き）画面に残し、考え中の一瞬だけ薄く表示する → 「答えが一度消える」体験を防ぐ。
