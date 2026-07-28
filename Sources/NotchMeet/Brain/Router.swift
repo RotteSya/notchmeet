@@ -7,12 +7,23 @@ struct RouteDecision {
 
 /// Decides intent + whether a cached answer truly matches (PLAN §7). Conservative:
 /// when unsure → no match (live generation handles it). NullRouter always misses.
+///
+/// `history` 是直前几轮的「面接官の質問＋提示した回答」摘要（可为空）。没有它，路由对
+/// 深掘り 是盲的：实测中「学生時代…」答完后接的「弊社ではどのように貢献できますか」
+/// 被当成孤立问题，靠「貢献」二字误命中了一条**过去经历**的原稿——上下文依赖的追问，
+/// 孤立的准备稿读出来就是答非所问。
 protocol Router: AnyObject {
-    func route(question: String, candidates: [BankEntry]) async throws -> RouteDecision
+    func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision
+}
+
+extension Router {
+    func route(question: String, candidates: [BankEntry]) async throws -> RouteDecision {
+        try await route(question: question, candidates: candidates, history: "")
+    }
 }
 
 final class NullRouter: Router {
-    func route(question: String, candidates: [BankEntry]) async throws -> RouteDecision {
+    func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision {
         RouteDecision(intent: "", matchedAnswer: nil)
     }
 }
@@ -35,6 +46,8 @@ final class LLMRouter: Router {
         - intent は次から最も近いものを1つ: \(intentList)
         - match は、その候補の準備済み回答を『この質問への返答としてそのまま読み上げて成立する』場合のみその番号。質問の言い回しが違っても、聞かれている中身に回答が正面から答えていれば match とする。
         - 語彙が違っても指す内容が同じなら match（例: ビザ＝在留資格、うち・御社＝当社、転勤＝勤務地）。
+        - 時間軸を合わせる: 入社後・将来どう貢献/活躍できるかを聞く質問に、過去の経験を述べるだけの回答は match ではない。逆に、過去の経験を聞く質問に将来の抱負だけの回答も match ではない。
+        - 直前のやり取りが与えられ、質問がその続き（直前の回答内容を踏まえた深掘り）である場合、直前の文脈に接続しないと成立しない質問には単独の準備回答を match にしない → null（live 生成が文脈を見て答える）。
         - 面接官が「あなたから何か質問は？」型の質問をした場合は、準備した逆質問の候補が該当する。
         - 複数の候補が該当する場合は、最も小さい番号を選ぶ（ユーザー作成の原稿を優先）。
         - 回答がズレる・部分的にしか答えない・自信がない場合は match は必ず null。
@@ -53,9 +66,13 @@ final class LLMRouter: Router {
         return cand
     }
 
-    func route(question: String, candidates: [BankEntry]) async throws -> RouteDecision {
+    func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision {
         let cand = Self.candidateBlock(candidates)
-        let user = "質問: \(question)\n\n候補:\n\(cand.isEmpty ? "(なし)" : cand)"
+        var user = ""
+        if !history.isEmpty {
+            user += "直前のやり取り:\n\(history)\n\n"
+        }
+        user += "質問: \(question)\n\n候補:\n\(cand.isEmpty ? "(なし)" : cand)"
         let raw = try await FastLLM.complete(system: Self.systemPrompt(), user: user, maxTokens: 80)
         return parse(raw, candidates: candidates)
     }
