@@ -53,12 +53,23 @@ enum ScriptImporter {
         Settings.sendContextToLLM && ProviderRegistry.llmResolution() != LLMResolution.none
     }
 
+    /// 一次导入归一化按 1 分钟额度计（最多 6 万字入模，与一次短会话量级相当）。
+    static let chargeSeconds = 60
+
     /// `complete` is injectable for tests; nil wires FastLLM when available.
     static func normalize(_ text: String, complete: Completion? = nil) async -> Result {
         let det = deterministic(text)
         if det.coverage >= goodCoverage { return det }   // coverage is the signal; a
         // 2-entry doc at 0.9 coverage is simply a small, clean script.
         guard text.count < 60_000 else { return det }   // pathological paste — stay offline
+        // 受管 LLM 的按次计量。这条路径此前完全绕过额度系统：余额为 0 的用户反复点
+        // 「整理稿件」即可无限消耗受管服务。计量失败时优雅退回确定性解析结果，
+        // 而不是让导入整个失败——用户的稿件依然进得来。
+        if complete == nil, isLLMAvailable,
+           !CreditManager.shared.chargeOneShot(seconds: chargeSeconds) {
+            NSLog("[import] insufficient credit — using deterministic parse only")
+            return det
+        }
         let transport: Completion? = complete ?? (isLLMAvailable
             ? { sys, user in try await FastLLM.complete(system: sys, user: user, maxTokens: 2048) }
             : nil)

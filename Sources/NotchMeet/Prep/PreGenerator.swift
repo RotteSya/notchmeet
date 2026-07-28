@@ -13,12 +13,23 @@ final class PreGenerator {
         self.bank = bank
     }
 
+    /// 每个 intent 一次受管 LLM 调用，按 10 秒额度计（本地 CLI 路径不计量）。
+    static let chargeSecondsPerIntent = 10
+
     /// Generate the bank. `progress` is called on completion of each intent.
     func generate(progress: ((Int, Int) -> Void)? = nil) async {
         let intents = Intents.list
         let context = facts.context(for: "")
         let cli = bestCLI()
         var out: [BankEntry] = []
+
+        // 走受管 LLM（无本地 CLI）时按次计量：这条路径此前完全绕过额度系统。
+        if cli == nil,
+           !CreditManager.shared.chargeOneShot(
+               seconds: Self.chargeSecondsPerIntent * intents.count) {
+            NSLog("[prep] insufficient credit — skipping answer bank build")
+            return
+        }
 
         for (i, intent) in intents.enumerated() {
             let prompt = buildPrompt(intent: intent, context: context)
@@ -43,7 +54,13 @@ final class PreGenerator {
             progress?(i + 1, intents.count)
         }
 
-        bank.replaceAll(out)
+        // 全部 intent 都失败（断网/限流）时，绝不用空表覆盖既有答案库——
+        // 面试前点一次「预生成」就把可用的旧答案清空，是最坏的时机。
+        guard !out.isEmpty else {
+            NSLog("[prep] all %d intents failed — keeping existing answer bank", intents.count)
+            return
+        }
+        await bank.replaceAll(out)   // 主线程写：与 TurnManager 的读同域
         NSLog("[prep] answer bank built: %d/%d intents", out.count, intents.count)
     }
 

@@ -19,7 +19,17 @@ final class LatencyMonitor {
     /// Supplies the last-voiced uptime (ns) from the audio path; 0/unknown → use endpoint.
     var voicedClock: (() -> UInt64)?
 
-    private struct Turn { var t0: UInt64; var endpoint: UInt64; var kind: TurnKind?; var first: Double? }
+    private struct Turn {
+        var t0: UInt64
+        var endpoint: UInt64
+        /// 最后一个终稿到达的时刻。把 `endpoint − t0` 这段一分为二：
+        /// `sttFinal − t0` 是 STT 的交付耗时（别人慢），
+        /// `endpoint − sttFinal` 是我们的 settle 等待（自己慢）。
+        /// 混在一起时，一次 4.5s 的端点延迟无法判断该去调窗口还是该查网络。
+        var sttFinal: UInt64
+        var kind: TurnKind?
+        var first: Double?
+    }
     private var turns: [Int: Turn] = [:]
 
     // Percentile pools (cold-start excluded), split by source.
@@ -27,23 +37,30 @@ final class LatencyMonitor {
     private var totalByKind: [TurnKind: [Double]] = [.cache: [], .live: []]
     private var coldDone = false
 
-    func turnStart(_ epoch: Int) {
+    /// - Parameter sttFinalNs: 最后一个终稿到达的 uptime；0 = 未知（退化为不拆分）。
+    func turnStart(_ epoch: Int, sttFinalNs: UInt64 = 0) {
         let endpoint = DispatchTime.now().uptimeNanoseconds
         var t0 = voicedClock?() ?? 0
         // Fall back to endpoint when there's no audio path (0), a future stamp, or a
         // stale one (>30s) — degrades to the old "T0 = STT final" behavior safely.
         if t0 == 0 || t0 > endpoint || endpoint &- t0 > 30_000_000_000 { t0 = endpoint }
-        turns[epoch] = Turn(t0: t0, endpoint: endpoint, kind: nil, first: nil)
+        // 钳进 [t0, endpoint]：终稿早于最后一个音素（VAD 比 STT 端点器更敏感时可能
+        // 发生）或晚于提交都不是有意义的拆分点，此时把整段算作 STT 交付。
+        let final = (sttFinalNs >= t0 && sttFinalNs <= endpoint) ? sttFinalNs : endpoint
+        turns[epoch] = Turn(t0: t0, endpoint: endpoint, sttFinal: final, kind: nil, first: nil)
     }
 
     func markFirstReadable(epoch: Int, kind: TurnKind) {
         guard var t = turns[epoch], t.first == nil else { return }
         let first = ms(t.t0, DispatchTime.now().uptimeNanoseconds)
         let endpointDelay = ms(t.t0, t.endpoint)
+        let sttLag = ms(t.t0, t.sttFinal)          // 等 STT 交付终稿（外部）
+        let settleWait = ms(t.sttFinal, t.endpoint) // 我们自己的 settle 等待（可调）
         t.first = first; t.kind = kind
         turns[epoch] = t
-        NSLog("[latency] turn %d (%@) first_readable=%dms (endpoint=%dms + gen=%dms)",
-              epoch, kind.rawValue, Int(first), Int(endpointDelay), Int(first - endpointDelay))
+        NSLog("[latency] turn %d (%@) first_readable=%dms (stt=%dms + settle=%dms + gen=%dms)",
+              epoch, kind.rawValue, Int(first),
+              Int(sttLag), Int(settleWait), Int(first - endpointDelay))
     }
 
     func turnEnd(_ epoch: Int) {

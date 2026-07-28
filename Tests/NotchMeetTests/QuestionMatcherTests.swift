@@ -70,6 +70,42 @@ final class QuestionMatcherTests: XCTestCase {
         }
     }
 
+    /// 实机误命中复现：「弊社ではどのように貢献できますか」（将来の貢献）。
+    ///
+    /// 修复前：语义最近的「なぜあなたを採用すべきですか」与问题几乎零字面重叠，进不了
+    /// top-4；而「〜で貢献した経験はありますか」（过去经历，**另一个问题**）靠「貢献」
+    /// bigram 反而入围——路由面前根本没有正确选项，怎么判都是错。
+    /// appeal 话题组的别名做了时间轴区分：貢献でき/貢献したい（将来向）触发，
+    /// 貢献した（过去式）不触发。
+    func testFutureContributionBridgesToSellYourselfEntry() {
+        let entries = [
+            entry("チーム以外の立場で貢献した経験はありますか"),   // 过去经历（陷阱）
+            entry("学生時代に力を入れたこと"),
+            entry("志望動機"),
+            entry("採用人数を絞る中で、なぜあなたを採用すべきですか"), // 语义最近的准备稿
+            entry("周囲からどんな人だと言われますか"),
+            entry("趣味・特技について教えてください"),
+        ]
+        let top = QuestionMatcher.ranked(entries, for: "弊社ではどのように貢献できますか。",
+                                         limit: 4).map(\.question)
+        XCTAssertTrue(top.contains("採用人数を絞る中で、なぜあなたを採用すべきですか"),
+                      "売り込み質問の gold が top4 に届かないと router に選択肢がない: \(top)")
+    }
+
+    /// 时间轴区分的反向保证：过去经历问句仍然把经历条目排在前面，
+    /// appeal 桥不得把「貢献した経験」问句劫持到售卖条目上。
+    func testPastContributionExperienceStillRanksTheExperienceEntry() {
+        let entries = [
+            entry("チーム以外の立場で貢献した経験はありますか"),
+            entry("採用人数を絞る中で、なぜあなたを採用すべきですか"),
+            entry("志望動機"),
+        ]
+        let top = QuestionMatcher.ranked(entries,
+                                         for: "リーダー以外の立場で貢献した経験はありますか。",
+                                         limit: 1).map(\.question)
+        XCTAssertEqual(top.first, "チーム以外の立場で貢献した経験はありますか")
+    }
+
     func testTieKeepsUserAuthoredOrder() {
         let entries = [entry("趣味"), entry("特技"), entry("アルバイト")]
         let result = QuestionMatcher.ranked(entries, for: "休日", limit: 2)

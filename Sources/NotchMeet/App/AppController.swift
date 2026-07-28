@@ -18,14 +18,29 @@ final class AppController {
     private let demoVoice = DemoVoice()
     private var demoUnpauseWork: DispatchWorkItem?
     private var captureStarted = false   // tap.start() succeeded & running (self-check)
-    private var recording = false        // explicit session is live (tap + STT uploading)
+    /// 「正在录音」这一个事实此前由四份状态分别维护（本字段、`notch.model.recording`、
+    /// `CreditManager.meteringActive`、反相语义的 `TurnManager.paused`），由五条
+    /// teardown 路径手工同步。漏一处的表现不是崩溃而是静默错账——F1 的静默扣费就是
+    /// 这么来的。现在统一经由 `setRecording(_:)` 变更，新增停止路径不可能再漏。
+    private(set) var recording = false   // explicit session is live (tap + STT uploading)
+
+    /// 录音状态的**唯一**写入口：一次调用把派生状态全部对齐。
+    private func setRecording(_ on: Bool) {
+        recording = on
+        notch.model.recording = on
+        turn?.paused = !on   // 停止时丢弃在途转录，避免停后还弹出答案
+    }
     private var languageCancellable: AnyCancellable?
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
     private var creditLowRevertWork: DispatchWorkItem?
+    private var connectionKeepWarm: Timer?
 
     func start() {
         Settings.cleanupLegacyKeys()
+        // 受管标记 UserDefaults → Keychain 指纹的一次性迁移。必须在 bootstrap 之前：
+        // 之后的一切计费判定（CreditPolicy）都依赖指纹登记。
+        ManagedKeyRegistry.migrateLegacyFlagsIfNeeded()
         credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
         observeCredit()
         notch.show()
@@ -91,6 +106,7 @@ final class AppController {
         control.onOpenWallet = { [weak self] in self?.openSettings(section: .wallet) }
         control.onManageScripts = { [weak self] in self?.openSettings(section: .scripts) }
         control.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
+        control.onToggleVisibility = { [weak self] in self?.notch.toggleVisibility() }
         HotKeyCenter.shared.register(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
             self?.notch.toggleVisibility()
         }
@@ -105,8 +121,16 @@ final class AppController {
     /// (Re)start the pipeline per AppConfig + current keys. Called at launch and
     /// whenever keys change from the menu.
     private func reloadPipeline() {
+        // 录音中重载（设置页改 Key、钱包兑换带 Key 的码）必须走完整停止路径：
+        // 否则 credit.endSession() 被跳过，计量计时器失去 owner 继续每秒扣费，
+        // 而 `.exhausted` 又因 recording 已被置 false 而被吞掉 → 静默扣到清零。
+        // stopRecording 幂等，重复调用安全。
+        if recording { stopRecording() }
         stt?.stop(); audio?.stop(); inactivity.stop()
-        stt = nil; audio = nil; turn = nil; captureStarted = false; recording = false
+        credit.endSession()   // 兜底：任何路径进来都保证表已停
+        stopConnectionKeepWarm()
+        setRecording(false)
+        stt = nil; audio = nil; turn = nil; captureStarted = false
         switch AppConfig.pipeline {
         case .demo:
             runDemo()
@@ -169,21 +193,20 @@ final class AppController {
             // socket opens — we never start uploading when there is nothing to capture.
             if let audio { try audio.start(); captureStarted = true; inactivity.start() }
             try stt.start()
-            recording = true
-            turn?.paused = false
+            setRecording(true)
             credit.beginSession(metered: metered)
+            startConnectionKeepWarm()
             enterListening()
         } catch AudioError.noCallApp {
             audio?.stop(); inactivity.stop()
-            captureStarted = false; recording = false
-            notch.model.recording = false
+            captureStarted = false
+            setRecording(false)
             enterReady()
             presentNoCallAppAlert()
         } catch {
             audio?.stop(); stt.stop(); inactivity.stop()
             captureStarted = false
-            recording = false
-            notch.model.recording = false
+            setRecording(false)
             NSLog("[live] start recording failed: %@", String(describing: error))
             notch.model.status = .error
             notch.model.message = .startupError
@@ -237,9 +260,9 @@ final class AppController {
         stt?.stop()
         inactivity.stop()
         credit.endSession()
+        stopConnectionKeepWarm()
         captureStarted = false
-        recording = false
-        turn?.paused = true   // drop any in-flight transcript so no answer pops up post-stop
+        setRecording(false)
         enterReady()
     }
 
@@ -282,11 +305,13 @@ final class AppController {
             creditLowRevertWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
         case .exhausted:
-            guard recording else { return }
+            // CreditManager 已自行停表；这里只负责把管线停下并告知用户。
+            // 不再 `guard recording` 提前返回——那正是「表还在走、通知被吞」的成因。
             NSLog("[credit] exhausted — stopping session")
-            stopRecording()
+            let wasRecording = recording
+            if wasRecording { stopRecording() }
             notch.model.message = .creditExhausted
-            presentCreditExhaustedAlert()
+            if wasRecording { presentCreditExhaustedAlert() }
         }
     }
 
@@ -356,6 +381,29 @@ final class AppController {
         }
     }
 
+    /// 会话期间的连接保温。
+    ///
+    /// 预热此前只在 arm 与 startRecording 各打一枪。面试官讲了几分钟题干之后，H2 连接
+    /// 已被服务端或 NAT 回收，下一问要重付 DNS + TLS + H2 建连——中国区跨运营商可达
+    /// 1s 以上，而它**必然**落在「对方讲了很久的那道复杂题」上，正是最不能超时的一问。
+    /// 每 60s 一发 1-token ping，不含任何用户数据。
+    private func startConnectionKeepWarm() {
+        connectionKeepWarm?.invalidate()
+        guard ProviderRegistry.llmResolution() != .none else { return }
+        let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.recording else { return }
+            self.prewarmLLM()
+        }
+        t.tolerance = 10
+        RunLoop.main.add(t, forMode: .common)
+        connectionKeepWarm = t
+    }
+
+    private func stopConnectionKeepWarm() {
+        connectionKeepWarm?.invalidate()
+        connectionKeepWarm = nil
+    }
+
     private func makeRouter() -> Router {
         ProviderRegistry.llmResolution() != .none ? LLMRouter() : NullRouter()
     }
@@ -369,8 +417,17 @@ final class AppController {
             s.onKeysChanged = { [weak self] in self?.reloadPipeline() }
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in
-                LocalData.deleteAll()
+                let failures = LocalData.deleteAll()
                 self?.facts.reload(); self?.bank.reload(); self?.scriptStore.reload(); self?.reloadPipeline()
+                // 「已删除」是一句隐私承诺，不能建立在被吞掉的错误上。
+                guard !failures.isEmpty else { return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = AppStrings.current.deleteIncompleteTitle
+                alert.informativeText = AppStrings.current.deleteIncompleteBody(
+                    failures.joined(separator: ", "))
+                alert.addButton(withTitle: AppStrings.current.ok)
+                alert.runModal()
             }
             s.onRerunOnboarding = { [weak self] in self?.openOnboarding() }
             settingsWindow = s
@@ -547,16 +604,42 @@ final class AppController {
                 }
             }
         }
+        // 转写连接中断 → 刘海显性提示。30 秒的重连预算期间用户必须知道它没在工作，
+        // 否则只是把旧的「静默失联」缩短到 30 秒而已。同 Apple 引擎的资产下载进度，
+        // 只在具体类上取回调，不动 SttClient 协议。
+        if let dg = sttc as? DeepgramSttClient {
+            dg.onConnectionChanged = { [weak self] connected in
+                DispatchQueue.main.async {
+                    guard let self, self.recording else { return }
+                    if connected {
+                        // 只有当前显示的就是重连提示时才恢复，避免盖掉正在展示的答案。
+                        if self.notch.model.message == .sttReconnecting { self.enterListening() }
+                    } else {
+                        self.notch.model.message = .sttReconnecting
+                    }
+                }
+            }
+        }
         sttc.onError = { [weak self] err in
             NSLog("[stt] error: %@", String(describing: err))
-            // Only terminal on-device errors (auth denied / no ja model) surface to the user;
-            // Deepgram's transient socket errors auto-retry and stay log-only (no error-flashing).
-            guard err is SttError else { return }
+            // Only terminal errors surface to the user; transient socket errors auto-retry
+            // and stay log-only (no error-flashing). Deepgram 的永久性故障现在会以
+            // `SttError.streamUnavailable` 抵达这里，因此不再被这道过滤器吞掉。
+            guard let sttErr = err as? SttError else { return }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.notch.model.status = .error
                 self.notch.model.message = .sttError
                 self.notch.model.errorDetail = err.localizedDescription
+                // 终态 STT 故障 = 这场会话不可能再产生转写。继续录音只会让用户白等，
+                // 计量会话还在按秒扣费——为一场 STT 从未工作的面试付钱。
+                if case .streamUnavailable = sttErr, self.recording {
+                    NSLog("[live] terminal STT failure — stopping session")
+                    self.stopRecording()
+                    self.notch.model.status = .error
+                    self.notch.model.message = .sttError
+                    self.notch.model.errorDetail = err.localizedDescription
+                }
             }
         }
 

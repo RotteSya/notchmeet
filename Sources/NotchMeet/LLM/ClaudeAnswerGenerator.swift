@@ -5,13 +5,13 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
     private let apiKey: String
     private let model: String
 
-    init(apiKey: String, model: String = "claude-sonnet-4-6") {
+    init(apiKey: String, model: String = ClaudeEndpoint.model) {
         self.apiKey = apiKey
         self.model = model
     }
 
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
-        guard let url = URL(string: "https://api.anthropic.com/v1/messages") else { throw LLMError.badURL }
+        guard let url = ClaudeEndpoint.url else { throw LLMError.badURL }
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 512,
@@ -19,10 +19,7 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
             "system": Prompts.system(context: req.context),
             "messages": [["role": "user", "content": Prompts.user(question: req.question, history: req.history)]],
         ]
-        let request = try LLMHTTP.post(url, headers: [
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-        ], body: body)
+        let request = try LLMHTTP.post(url, headers: ClaudeEndpoint.headers(apiKey), body: body)
         try await LLMHTTP.streamSSE(request, extract: Self.delta, onDelta: onDelta)
     }
 
