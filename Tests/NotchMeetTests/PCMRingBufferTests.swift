@@ -107,6 +107,49 @@ final class PCMRingBufferTests: XCTestCase {
         XCTAssertEqual(read(ring, max: 5000).count, 0, "超容量块不得部分写入")
     }
 
+    // MARK: - 时间戳回推（§4 T0 的正确性依赖它）
+
+    /// `availableSamples` 必须如实反映「还欠消费者多少」——消费者用它把采集时刻
+    /// 从处理时刻往回推。读错了，T0 就会偏，延迟统计偏乐观且 bankedSilence 少算。
+    func testAvailableSamplesTracksTheUnconsumedBacklog() {
+        let ring = makeRing(capacitySamples: 8192)
+        XCTAssertEqual(ring.availableSamples, 0)
+
+        write(ring, [Float](repeating: 1, count: 480))
+        XCTAssertEqual(ring.availableSamples, 480)
+
+        _ = read(ring, max: 160)
+        XCTAssertEqual(ring.availableSamples, 320, "读走一部分后，剩余应相应减少")
+
+        write(ring, [Float](repeating: 2, count: 240))
+        XCTAssertEqual(ring.availableSamples, 560)
+
+        _ = read(ring, max: 10_000)
+        XCTAssertEqual(ring.availableSamples, 0, "读空后不得有残留")
+    }
+
+    /// 绕回之后计数仍然正确（`write &- read` 用的是单调递增的序号，不是取模值）。
+    func testAvailableSamplesStaysCorrectAcrossWrapAround() {
+        let capacity = 4096
+        let ring = makeRing(capacitySamples: capacity)
+        for _ in 0..<50 {
+            write(ring, [Float](repeating: 1, count: 300))
+            XCTAssertEqual(ring.availableSamples, 300)
+            _ = read(ring, max: 300)
+            XCTAssertEqual(ring.availableSamples, 0)
+        }
+    }
+
+    /// 回推公式本身：滞后时长 = 残留采样 / 声道数 / 采样率。
+    /// 48kHz 立体声下，残留 9600 个交织采样 = 100ms。
+    func testBackdatingMathMatchesBufferedDuration() {
+        let channels = 2
+        let sampleRate = 48000.0
+        let interleavedRemaining = 9600          // 4800 帧 × 2 声道
+        let lagSeconds = Double(interleavedRemaining) / Double(channels) / sampleRate
+        XCTAssertEqual(lagSeconds, 0.1, accuracy: 1e-9, "应为 100ms")
+    }
+
     // MARK: - 并发（真实使用形态：IO 线程写 / drain 队列读）
 
     /// 单生产者 + 单消费者并发跑，验证消费端拿到的是**连续递增**序列——

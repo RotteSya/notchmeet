@@ -33,6 +33,9 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
     private var started = false
     private var reconnectDelay: TimeInterval = 0.5
     private var consecutiveFailures = 0
+    /// 本轮连续故障的起始时刻（连上后清零）。重连预算按墙钟算，不按次数——
+    /// 次数会被退避策略绑架，改一次退避就悄悄改变了「多久判死」。
+    private var firstFailureNs: UInt64 = 0
     private var pendingFinal = ""
     private var lastConf = 0.0
     private var lastServerNs: UInt64 = 0
@@ -50,10 +53,22 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
 
     private let dbg = ProcessInfo.processInfo.environment["FI_STT_DEBUG"] == "1"
 
-    /// 连续这么多次连接失败后判定为永久故障，冒泡给用户。
-    static let maxConsecutiveFailures = 4
+    /// 网络类故障的重连预算（从第一次失败起算）。
+    ///
+    /// 这里的取舍是实测调出来的：早先按「连续 4 次失败」判死，退避 0.5/1/2s 加起来
+    /// 只有约 3.6 秒——一次 Wi-Fi 接入点切换、进电梯、地铁过站都会超过它，而面试
+    /// 进行到一半被强制终止、要重新按开始，代价远大于多等几秒。反过来，旧代码的
+    /// 无限静默重连又是另一个极端（整场面试盯着「聆听中」却零转写）。
+    /// 30 秒能覆盖绝大多数可恢复的中断，又不会让人以为它还活着。
+    static let transientRetryBudgetNs: UInt64 = 30_000_000_000
     /// 发着音频却这么久收不到任何服务端帧 → 判定半开，主动重连。
     static let serverSilenceTimeoutNs: UInt64 = 5_000_000_000
+    /// 握手阶段的这些状态码意味着重试没有意义（Key 撤销 / 欠费 / 无权限）。
+    static let fatalHTTPStatuses: Set<Int> = [401, 402, 403]
+
+    /// 连接中断 / 恢复。刘海据此显示「正在重连」——30 秒预算期间用户必须知道
+    /// 它没在工作，否则等于把旧的「静默失联」缩短到 30 秒而已。
+    var onConnectionChanged: ((Bool) -> Void)?
 
     init(apiKey: String, language: String) {
         self.apiKey = apiKey
@@ -73,6 +88,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             guard !self.started else { return }
             self.started = true
             self.consecutiveFailures = 0
+            self.firstFailureNs = 0
             self.reconnectDelay = 0.5
             self.connectLocked()
             self.startWatchdogLocked()
@@ -178,18 +194,37 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
                 guard gen == self.generation, self.started else { return }
                 switch result {
                 case .failure(let err):
-                    self.sendState.withLock { $0.connected = false }
-                    self.consecutiveFailures += 1
-                    NSLog("[deepgram] recv err (%d/%d): %@", self.consecutiveFailures,
-                          Self.maxConsecutiveFailures, String(describing: err))
-                    if self.consecutiveFailures >= Self.maxConsecutiveFailures {
+                    let wasConnected = self.sendState.withLock { s -> Bool in
+                        let was = s.connected; s.connected = false; return was
+                    }
+                    if wasConnected { self.onConnectionChanged?(false) }
+
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    if self.firstFailureNs == 0 { self.firstFailureNs = now }
+                    let elapsed = now &- self.firstFailureNs
+
+                    // 握手被服务端拒绝（Key 撤销/欠费）→ 重试没有意义，立刻终止。
+                    // 网络类错误则给足 30 秒预算，别为一次电梯断送整场面试。
+                    let httpStatus = (t.response as? HTTPURLResponse)?.statusCode
+                    let fatalAuth = httpStatus.map(Self.fatalHTTPStatuses.contains) ?? false
+                    let budgetSpent = elapsed > Self.transientRetryBudgetNs
+
+                    NSLog("[deepgram] recv err (%.1fs/%.0fs%@): %@",
+                          Double(elapsed) / 1e9,
+                          Double(Self.transientRetryBudgetNs) / 1e9,
+                          fatalAuth ? ", auth" : "",
+                          String(describing: err))
+
+                    if fatalAuth || budgetSpent {
                         // 永久性故障：必须让用户看见，否则整场面试显示「聆听中」却零转写。
                         self.started = false
                         self.teardownLocked()
                         self.watchdog?.cancel(); self.watchdog = nil
                         self.keepAlive?.cancel(); self.keepAlive = nil
-                        self.onError?(SttError.streamUnavailable(
-                            detail: (err as NSError).localizedDescription))
+                        let detail = fatalAuth
+                            ? "HTTP \(httpStatus ?? 0)"
+                            : (err as NSError).localizedDescription
+                        self.onError?(SttError.streamUnavailable(detail: detail))
                         return
                     }
                     self.onError?(err)
@@ -198,6 +233,7 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
                     self.lastServerNs = DispatchTime.now().uptimeNanoseconds
                     self.sentAudioSinceServerMsg = false
                     self.consecutiveFailures = 0
+                    self.firstFailureNs = 0   // 收到服务端帧 = 这一轮故障结束
                     switch msg {
                     case .string(let s): self.handleLocked(s)
                     case .data(let d):
@@ -210,9 +246,12 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
         }
     }
 
+    /// 连续这么多次发送失败即认为链路已废，强制重连（判死仍由接收侧的墙钟预算决定）。
+    private static let maxSendFailures = 4
+
     private func noteSendFailureLocked() {
         consecutiveFailures += 1
-        guard consecutiveFailures >= Self.maxConsecutiveFailures, started else { return }
+        guard consecutiveFailures >= Self.maxSendFailures, started else { return }
         NSLog("[deepgram] repeated send failures — forcing reconnect")
         consecutiveFailures = 0
         scheduleReconnectLocked()
@@ -301,8 +340,10 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             guard webSocketTask === self.task, self.started else { return }
             self.reconnectDelay = 0.5
             self.consecutiveFailures = 0
+            self.firstFailureNs = 0
             self.lastServerNs = DispatchTime.now().uptimeNanoseconds
             self.sendState.withLock { $0 = SendState(connected: true, task: webSocketTask) }
+            self.onConnectionChanged?(true)
             NSLog("[deepgram] connected (%@)", self.language)
         }
     }

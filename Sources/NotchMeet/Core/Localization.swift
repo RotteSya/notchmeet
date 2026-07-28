@@ -24,6 +24,7 @@ enum RuntimeMessage: Equatable {
     case startupError
     case generationError
     case sttError
+    case sttReconnecting  // 转写连接中断，重连预算内（用户必须知道它此刻没在工作）
     case creditLow        // 额度即将用完（录音继续，短暂提示后回到聆听态）
     case creditExhausted  // 额度归零：会话已被停止，需要充值
 }
@@ -94,6 +95,8 @@ struct AppStrings {
         case .startupError: return pick("启动失败", "起動エラー")
         case .generationError: return pick("回答生成失败", "回答生成エラー")
         case .sttError: return pick("语音识别不可用", "音声認識が利用できません")
+        case .sttReconnecting: return pick("网络中断，正在重连…（这段话可能没被听到）",
+                                           "接続が切れました。再接続中…（この間の発言は拾えていない可能性があります）")
         case .creditLow: return pick("额度即将用完——面试结束后记得充值", "残り時間わずか——面接後にチャージをお忘れなく")
         case .creditExhausted: return pick("额度已用完，充值后即可继续使用", "残高がなくなりました。チャージすると続けて使えます")
         }
@@ -112,6 +115,7 @@ struct AppStrings {
         case .autoStopped: return pick("已自动停止", "自動停止しました")
         case .bankGenerating: return pick("准备回答中", "回答を準備中")
         case .startupError, .generationError, .sttError: return pick("需要处理", "確認が必要です")
+        case .sttReconnecting: return pick("正在重连", "再接続中")
         case .creditLow: return pick("额度即将用完", "残りわずか")
         case .creditExhausted: return pick("额度已用完", "残高がありません")
         }
