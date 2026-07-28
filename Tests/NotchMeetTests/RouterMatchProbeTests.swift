@@ -123,4 +123,50 @@ final class RouterMatchProbeTests: XCTestCase {
         XCTAssertEqual(trapHits, 0,
                        "深掘り貢献質問に過去経历稿を読ませてはならない（答非所问 × 每次一致）")
     }
+
+    /// 实机事故第二形态（截图复现）：「それを弊社で生かすことができますか」。
+    ///
+    /// 修复第一轮后仍然出错的原因：路由判「形状」不判「内容」——候选里有一条
+    /// **桥接型**追问稿（经历→公司活用），形状完全符合「将来活用」，于是被 match；
+    /// 但那条稿桥接的是**另一段经历**（系统导入的ずれ），与 history 里刚讲过的
+    /// 经历（MBA 学び直し）不是同一段。面试官刚听完 A 经历问「能活用吗」，
+    /// 读出来的却是 B 经历的领悟——答案被掉包。
+    /// 经历一致性规则下唯一正确的判定是 null（live 生成拿着真实 history 桥接）。
+    func testDeicticFollowUpRejectsBridgeEntryBoundToDifferentExperience() async throws {
+        guard ProcessInfo.processInfo.environment["FI_ROUTER_PROBE"] == "1" else {
+            throw XCTSkip("router probe disabled — set FI_ROUTER_PROBE=1 to run against the real network")
+        }
+        guard ProviderRegistry.llmResolution() != LLMResolution.none else {
+            throw XCTSkip("no LLM key configured")
+        }
+
+        // 绑定在「系统导入」经历上的桥接稿——形状对（将来活用）、经历错。
+        let wrongExperienceBridge = entry(
+            "その学びは仕事でどう活きますか",
+            "分かってきたのは、両者のずれです。入れる側は効率を語り、入れられる側は自分が数字で見られていると感じます。御社がシステムをお客様の現場に入れる時も、同じずれが起きると思います。")
+        let script = [
+            wrongExperienceBridge,
+            entry("学生時代に力を入れたこと",
+                  "学園祭の運営で、来場者データを分析して動線を改善しました。"),
+            entry("なぜMBAに進学したのですか",
+                  "現場で感じた疑問を理論で確かめたくて、進学を決めました。データ分析を体系的に学び直しました。"),
+            entry("志望動機", "貴社の顧客起点の文化に共感したためです。"),
+        ]
+        // history 里刚讲的是 MBA 学び直し的经历——与桥接稿绑定的经历不同。
+        let history = "面接官: なぜMBAに進学されたのですか？\n回答案: 現場で感じた疑問を理論で確かめたくて、進学を決めました。データ分析を体系的に学び直しました。"
+        let question = "なるほどですね。それを弊社で生かすことができますか。"
+
+        let router = LLMRouter()
+        var wrongBridgeHits = 0
+        let rounds = 3
+        for i in 0..<rounds {
+            let cands = QuestionMatcher.ranked(script, for: question, limit: 4)
+            let d = try await router.route(question: question, candidates: cands, history: history)
+            let matched = d.matchedAnswer.flatMap { a in script.first { $0.answer == a }?.question } ?? "null"
+            if d.matchedAnswer == wrongExperienceBridge.answer { wrongBridgeHits += 1 }
+            NSLog("[router-probe] deictic round %d → %@", i + 1, matched)
+        }
+        XCTAssertEqual(wrongBridgeHits, 0,
+                       "「それを」が指す経历と別の経历を語る稿を読ませてはならない（答案掉包）")
+    }
 }
