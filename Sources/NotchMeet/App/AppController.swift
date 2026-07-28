@@ -604,6 +604,22 @@ final class AppController {
                 }
             }
         }
+        // 转写连接中断 → 刘海显性提示。30 秒的重连预算期间用户必须知道它没在工作，
+        // 否则只是把旧的「静默失联」缩短到 30 秒而已。同 Apple 引擎的资产下载进度，
+        // 只在具体类上取回调，不动 SttClient 协议。
+        if let dg = sttc as? DeepgramSttClient {
+            dg.onConnectionChanged = { [weak self] connected in
+                DispatchQueue.main.async {
+                    guard let self, self.recording else { return }
+                    if connected {
+                        // 只有当前显示的就是重连提示时才恢复，避免盖掉正在展示的答案。
+                        if self.notch.model.message == .sttReconnecting { self.enterListening() }
+                    } else {
+                        self.notch.model.message = .sttReconnecting
+                    }
+                }
+            }
+        }
         sttc.onError = { [weak self] err in
             NSLog("[stt] error: %@", String(describing: err))
             // Only terminal errors surface to the user; transient socket errors auto-retry

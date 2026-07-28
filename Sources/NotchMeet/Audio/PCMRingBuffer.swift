@@ -68,6 +68,12 @@ final class PCMRingBuffer {
         return available
     }
 
+    /// 尚未被消费的采样数。消费者用它把时间戳往回推算——刚读出的那一块音频，
+    /// 其末尾对应的采集时刻是「现在减去这些残留采样的时长」，而不是「现在」。
+    var availableSamples: Int {
+        indices.withLock { $0.write &- $0.read }
+    }
+
     /// 取出并清零溢出计数（诊断日志用）。持续非零 = 消费者跟不上，需要调查。
     func takeOverflowCount() -> Int {
         overflow.withLock { let v = $0; $0 = 0; return v }

@@ -25,11 +25,27 @@ final class SttReliabilityTests: XCTestCase {
         XCTAssertFalse(message.isEmpty)
     }
 
-    /// 重连上限必须是有限值——无限重连就是「整场面试盯着聆听中」。
-    func testReconnectHasAFiniteCeiling() {
-        XCTAssertGreaterThan(DeepgramSttClient.maxConsecutiveFailures, 0)
-        XCTAssertLessThanOrEqual(DeepgramSttClient.maxConsecutiveFailures, 10,
-                                 "上限过高等于没有上限：面试场景下用户等不了那么久")
+    /// 重连预算必须有限，且足够长。
+    ///
+    /// 两个方向都错过：无限重连 = 整场面试盯着「聆听中」却零转写；而最初按「连续 4 次
+    /// 失败」判死只有约 3.6 秒，一次 Wi-Fi 接入点切换就会强杀会话——实测中真的发生了。
+    func testTransientRetryBudgetIsBoundedButSurvivesARoamingBlip() {
+        let seconds = Double(DeepgramSttClient.transientRetryBudgetNs) / 1e9
+        XCTAssertGreaterThanOrEqual(seconds, 15,
+                                    "预算过短会因 Wi-Fi 切换/电梯这类可恢复中断误杀会话")
+        XCTAssertLessThanOrEqual(seconds, 120,
+                                 "预算过长等于没有上限：用户会以为它还在工作")
+    }
+
+    /// 鉴权类失败必须**立刻**终止——Key 被撤销或欠费时，重试到预算耗尽只是白等。
+    func testAuthFailuresAreClassifiedAsFatal() {
+        XCTAssertTrue(DeepgramSttClient.fatalHTTPStatuses.contains(401), "Key 无效")
+        XCTAssertTrue(DeepgramSttClient.fatalHTTPStatuses.contains(402), "欠费")
+        XCTAssertTrue(DeepgramSttClient.fatalHTTPStatuses.contains(403), "无权限")
+        XCTAssertFalse(DeepgramSttClient.fatalHTTPStatuses.contains(429),
+                       "限流是暂时的，不该按永久故障处理")
+        XCTAssertFalse(DeepgramSttClient.fatalHTTPStatuses.contains(500),
+                       "服务端故障可能自行恢复")
     }
 
     /// 看门狗超时必须短于人类对「它是不是坏了」的忍耐窗口，且长于正常静默间隙。

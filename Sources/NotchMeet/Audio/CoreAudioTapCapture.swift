@@ -168,6 +168,15 @@ final class CoreAudioTapCapture: NSObject, AudioCapture {
         while true {
             let got = ring.read(into: scratch, max: scratchCapacity)
             guard got >= channels else { break }
+            // 这一块音频**末尾**的真实采集时刻 = 现在 − 缓冲里尚未消费的时长。
+            //
+            // 直接用「现在」会把 §4 的 T0 时钟整体往后推最多约 120ms（drain 定时器
+            // 20ms 粒度 + 单次最多取 100ms）：延迟统计会偏乐观，更要紧的是
+            // bankedSilence 少算这段静音，settle 窗口白等一会儿——在 1.8s 的端点
+            // 预算里这是实打实的损失。用残留量回推可自我校正：定时器若被推迟，
+            // 残留更多，回推也更多。
+            let lagNs = UInt64(Double(ring.availableSamples) / Double(channels)
+                               / interleaved.sampleRate * 1_000_000_000)
             let frames = AVAudioFrameCount(got / channels)
             guard frames > 0,
                   let inBuf = AVAudioPCMBuffer(pcmFormat: interleaved, frameCapacity: frames),
@@ -199,7 +208,8 @@ final class CoreAudioTapCapture: NSObject, AudioCapture {
             let p = ch[0]
             for i in 0..<n { let v = abs(Int(p[i])); if v > peak { peak = v } }
             let nowNs = DispatchTime.now().uptimeNanoseconds
-            if peak > Self.voiceThreshold { setLastVoiced(nowNs) }  // ≈ last phoneme → §4 T0
+            // 回推到本块末尾的采集时刻，而不是处理时刻（见上方 lagNs 的说明）。
+            if peak > Self.voiceThreshold { setLastVoiced(nowNs &- lagNs) } // ≈ last phoneme → §4 T0
             dbgFrames += n
             if peak > dbgPeak { dbgPeak = peak }
             if nowNs &- dbgLastNs > 2_000_000_000 {
