@@ -34,4 +34,36 @@ final class PromptsTests: XCTestCase {
         let user = Prompts.user(question: "自己紹介をお願いします。", history: "")
         XCTAssertFalse(user.contains("これまでの流れ"))
     }
+
+    /// 指代型追问必须带「それ＝直前の回答内容」的解释与禁替换指令。
+    /// 实机事故：路由侧否决了错误桥接稿之后，生成侧因为 system prompt 的
+    /// 「标题相符则照抄准备稿」指令把同一条稿又抄了回来。
+    func testDeicticQuestionGetsReferenceResolutionInstruction() {
+        let user = Prompts.user(
+            question: "それを弊社で生かすことができますか。",
+            history: "面接官: なぜMBAに進学したのですか？\n回答案: データ分析を体系的に学び直しました。")
+        XCTAssertTrue(user.contains("直前の「回答案」で述べた内容を指しています"))
+        XCTAssertTrue(user.contains("別の経験を語る文面に差し替えてはいけません"))
+    }
+
+    /// 非指代问题不加这段——避免每一题都背着多余指令。
+    func testNonDeicticQuestionOmitsReferenceInstruction() {
+        let user = Prompts.user(
+            question: "弊社ではどのように貢献できますか。",
+            history: "面接官: 自己紹介を。\n回答案: 私の強みは実行力です。")
+        XCTAssertFalse(user.contains("差し替えてはいけません"))
+    }
+
+    /// 无 history 时即便问句含指代词也不加（没有可指的对象）。
+    func testDeicticWithoutHistoryOmitsReferenceInstruction() {
+        let user = Prompts.user(question: "それを弊社で生かすことができますか。", history: "")
+        XCTAssertFalse(user.contains("差し替えてはいけません"))
+    }
+
+    /// system prompt 的「准备稿最优先」规则必须带例外条款——不带的话，
+    /// grounding 里任何标题相似的错位稿都会被无条件照抄。
+    func testSystemPromptScriptPrecedenceHasContextException() {
+        let system = Prompts.system(context: "何か")
+        XCTAssertTrue(system.contains("別の経験・別の文脈**を語る原稿は使わない"))
+    }
 }

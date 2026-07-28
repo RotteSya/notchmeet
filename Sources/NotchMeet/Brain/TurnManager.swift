@@ -281,10 +281,21 @@ final class TurnManager: @unchecked Sendable {
         var ctx = ""
         if Settings.sendContextToLLM {
             ctx = knowledge.context(for: question)
-            // Grounding 的排序查询混入上一个问题：追问的正确素材往往是**刚刚答过**的
-            // 那条原稿（把经历桥接到贡献），只按当前问题排序永远拉不进它。
+            // Grounding 的排序查询按问题类型选素材：
+            // - 指代型追问（「それを弊社で…」）：素材就是**被指代的那段**——只按上一个
+            //   问题排序。这同时把「活用/貢献」形状的错位桥接稿自然挤出上下文：system
+            //   prompt 会指示模型优先照抄标题相符的准备稿，错误稿一旦进入 grounding，
+            //   路由侧的否决就会在生成侧被绕过（实机已发生）。
+            // - 普通追问：当前问题混入上一问，刚答过的条目能作为素材。
             let prevQ = history.last?.q ?? ""
-            let groundingQuery = prevQ.isEmpty ? question : question + " " + prevQ
+            let groundingQuery: String
+            if prevQ.isEmpty {
+                groundingQuery = question
+            } else if LLMRouter.isDeictic(question) {
+                groundingQuery = prevQ
+            } else {
+                groundingQuery = question + " " + prevQ
+            }
             if let script = scriptStore?.contextBlock(for: groundingQuery), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
