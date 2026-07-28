@@ -84,4 +84,43 @@ final class RouterMatchProbeTests: XCTestCase {
         XCTAssertEqual(wrong, 0, "matching the WRONG entry is worse than a miss")
         XCTAssertEqual(falsePositives, 0, "conservativeness must survive: unknown questions → null")
     }
+
+    /// 实机事故复现：ガクチカ回答后的深掘り「弊社ではどのように貢献できますか」。
+    ///
+    /// 修复前的双重失明：路由看不到上一轮对话，把追问当孤立问题；候选里靠「貢献」
+    /// bigram 混入的「〜で貢献した経験」（过去经历）被误判命中——用户每次拿到的都是
+    /// 答非所问的同一条原稿。可接受的判定只有两种：null（live 生成拿着 history 桥接）
+    /// 或命中「なぜあなたを採用すべきですか」（语义上正面回答）。绝不能是经历条目。
+    func testFollowUpContributionQuestionNeverMatchesPastExperience() async throws {
+        guard ProcessInfo.processInfo.environment["FI_ROUTER_PROBE"] == "1" else {
+            throw XCTSkip("router probe disabled — set FI_ROUTER_PROBE=1 to run against the real network")
+        }
+        guard ProviderRegistry.llmResolution() != LLMResolution.none else {
+            throw XCTSkip("no LLM key configured")
+        }
+
+        let trap = entry("チーム以外の立場で貢献した経験はありますか",
+                         "サークルの会計係として、備品管理の仕組みを作り直しました。目立たない役割でも改善を積み重ねる貢献が得意です。")
+        let sellYourself = entry("採用人数を絞る中で、なぜあなたを採用すべきですか",
+                                 "私を採用いただく理由は、課題を要件に落とす力と、現場に入り込む行動力です。貴社のプロジェクトで即戦力として貢献できます。")
+        let gakuchika = entry("学生時代に力を入れたこと",
+                              "学園祭の運営で、来場者データを分析して動線を改善しました。仮説を立てて検証する力が身につきました。")
+        let script = [trap, gakuchika, sellYourself, entry("志望動機", "貴社の顧客起点の文化に共感したためです。")]
+
+        let question = "弊社ではどのように貢献できますか？"
+        let history = "面接官: 学生時代に頑張ったことは何ですか？\n回答案: \(gakuchika.answer)"
+
+        let router = LLMRouter()
+        var trapHits = 0
+        let rounds = 3   // 小模型有随机性，跑三轮：一次都不允许命中陷阱
+        for i in 0..<rounds {
+            let cands = QuestionMatcher.ranked(script, for: question, limit: 4)
+            let d = try await router.route(question: question, candidates: cands, history: history)
+            let matched = d.matchedAnswer.flatMap { a in script.first { $0.answer == a }?.question } ?? "null"
+            if d.matchedAnswer == trap.answer { trapHits += 1 }
+            NSLog("[router-probe] follow-up round %d → %@", i + 1, matched)
+        }
+        XCTAssertEqual(trapHits, 0,
+                       "深掘り貢献質問に過去経历稿を読ませてはならない（答非所问 × 每次一致）")
+    }
 }

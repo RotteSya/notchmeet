@@ -255,11 +255,22 @@ final class TurnManager: @unchecked Sendable {
         model.status = .thinking
         model.message = .thinking
 
+        currentQuestion = question
+        // 面接は連続した会話：hist は路由与 grounding 都要用（同一隐私门）。
+        // 深掘り（「弊社ではどのように貢献できますか」接在ガクチカ回答之后）对孤立
+        // 处理是致命的——路由会误命中字面相近的过去经历稿，grounding 也拉不进
+        // 刚刚回答过的那条原稿。
+        var hist = ""
+        if Settings.sendContextToLLM {
+            hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
+        }
+
         // Source A: router/cache — user script (preferred) + AI bank, if any candidates.
         let cands = routeCandidates(for: question)
         if !cands.isEmpty {
             routerTask = Task { [weak self] in
-                await self?.runRouter(question: question, cands: cands, myEpoch: myEpoch)
+                await self?.runRouter(question: question, cands: cands, history: hist,
+                                      myEpoch: myEpoch)
             }
         }
 
@@ -267,15 +278,16 @@ final class TurnManager: @unchecked Sendable {
         // grounding so a miss still produces an answer consistent with the user's wording.
         // Gated on the privacy toggle: when the user has opted out, the resume facts and
         // script are NOT sent to the cloud LLM (answers become generic).
-        currentQuestion = question
         var ctx = ""
-        var hist = ""
         if Settings.sendContextToLLM {
             ctx = knowledge.context(for: question)
-            if let script = scriptStore?.contextBlock(for: question), !script.isEmpty {
+            // Grounding 的排序查询混入上一个问题：追问的正确素材往往是**刚刚答过**的
+            // 那条原稿（把经历桥接到贡献），只按当前问题排序永远拉不进它。
+            let prevQ = history.last?.q ?? ""
+            let groundingQuery = prevQ.isEmpty ? question : question + " " + prevQ
+            if let script = scriptStore?.contextBlock(for: groundingQuery), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
-            hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
         }
         let req = GenRequest(question: question, context: ctx, history: hist)
         liveTask = Task { [weak self] in
@@ -296,10 +308,12 @@ final class TurnManager: @unchecked Sendable {
         return Array(cands.prefix(5))
     }
 
-    private func runRouter(question: String, cands: [BankEntry], myEpoch: Int) async {
+    private func runRouter(question: String, cands: [BankEntry], history: String,
+                           myEpoch: Int) async {
         let decision: RouteDecision? = await {
             do {
-                return try await router.route(question: question, candidates: cands)
+                return try await router.route(question: question, candidates: cands,
+                                              history: history)
             } catch {
                 // 旧实现是 `try?`：路由 LLM 持续 429 时，整场面试从不命中原稿、全走 live
                 // 生成，与「真的没匹配上」在现场完全无法区分——正是「答案不是我准备的
