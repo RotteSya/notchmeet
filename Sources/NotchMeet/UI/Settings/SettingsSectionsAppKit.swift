@@ -223,20 +223,17 @@ final class KeyRowView: FlippedView {
         // A pasted activation code (nmk1.…) carries every key at once: apply them all and let the
         // section refresh the sibling rows, instead of saving this single field.
         if let keys = SetupCode.decode(trimmed) {
-            for (n, v) in keys {
-                let val = v.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !val.isEmpty {
-                    Secrets.set(n, val)
-                    Settings.markKeyManaged(n, true)   // 码发放的 Key＝受管 → 计量
-                }
-            }
+            // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+            guard SetupCode.confirmApply(keys) else { return }
+            KeyProvisioner.apply(keys, managed: true)   // 码发放的 Key＝受管 → 计量
             field.stringValue = ""
             onChanged()
             onCodeApplied?()
             return
         }
-        if trimmed.isEmpty { Secrets.delete(name) } else { Secrets.set(name, trimmed) }
-        Settings.markKeyManaged(name, false)   // 手输/清除＝自备（BYO）→ 不计量
+        // 手输/清除＝自备（BYO）→ 不计量。但对预填的**同一个值**点保存不算换 Key：
+        // KeyProvisioner 按值指纹判定，不会把受管一键降级成自备。
+        KeyProvisioner.set(name, value: trimmed)
         let was = isSet
         isSet = !trimmed.isEmpty
         refreshStatus(bounce: isSet && !was)

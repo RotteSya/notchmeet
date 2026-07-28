@@ -148,21 +148,16 @@ enum Settings {
 
     /// 当前生效的 `name` Key 是否为「受管」来源（出厂内置 / 激活码带入）——受管即计量
     /// （见 `CreditPolicy`）。判定跟随 `apiKey` 的解析顺序，两者永不脱节：
-    /// - Keychain 命中 → 看激活码写入时打的受管标记（手输的没有标记 = BYO）。
+    /// - Keychain 命中 → 按**值指纹**比对（见 `ManagedKeyRegistry`，存 Keychain 账本，
+    ///   用户改不动；旧的 UserDefaults 标记一改就能免计量）。
     /// - env 命中 → 开发/BYO，一律不计量。
     /// - 内置命中 → 受管。
     static func keyIsManaged(_ name: String) -> Bool {
         if let v = Secrets.get(name), !v.isEmpty {
-            return UserDefaults.standard.bool(forKey: "nm_key_managed_\(name)")
+            return ManagedKeyRegistry.isManaged(name: name, value: v)
         }
         if let v = ProcessInfo.processInfo.environment[name], !v.isEmpty { return false }
         return Provisioning.serviceKey(name) != nil
-    }
-
-    /// 激活码写 Key 时标记受管；用户手输/清除时撤销标记（`KeyRowView` 调用）。
-    static func markKeyManaged(_ name: String, _ managed: Bool) {
-        if managed { UserDefaults.standard.set(true, forKey: "nm_key_managed_\(name)") }
-        else { UserDefaults.standard.removeObject(forKey: "nm_key_managed_\(name)") }
     }
 
     /// Drop UserDefaults keys left behind by removed features so upgraded installs

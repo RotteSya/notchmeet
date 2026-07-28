@@ -14,7 +14,7 @@ final class RouterLateHitTests: XCTestCase {
             self.delayNs = delayMs * 1_000_000
             self.answer = answer
         }
-        func route(question: String, candidates: [BankEntry]) async throws -> RouteDecision {
+        func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision {
             try await Task.sleep(nanoseconds: delayNs)
             return RouteDecision(intent: "自己紹介", matchedAnswer: answer)
         }

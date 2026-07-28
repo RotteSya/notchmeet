@@ -24,6 +24,7 @@ enum RuntimeMessage: Equatable {
     case startupError
     case generationError
     case sttError
+    case sttReconnecting  // 转写连接中断，重连预算内（用户必须知道它此刻没在工作）
     case creditLow        // 额度即将用完（录音继续，短暂提示后回到聆听态）
     case creditExhausted  // 额度归零：会话已被停止，需要充值
 }
@@ -94,6 +95,8 @@ struct AppStrings {
         case .startupError: return pick("启动失败", "起動エラー")
         case .generationError: return pick("回答生成失败", "回答生成エラー")
         case .sttError: return pick("语音识别不可用", "音声認識が利用できません")
+        case .sttReconnecting: return pick("网络中断，正在重连…（这段话可能没被听到）",
+                                           "接続が切れました。再接続中…（この間の発言は拾えていない可能性があります）")
         case .creditLow: return pick("额度即将用完——面试结束后记得充值", "残り時間わずか——面接後にチャージをお忘れなく")
         case .creditExhausted: return pick("额度已用完，充值后即可继续使用", "残高がなくなりました。チャージすると続けて使えます")
         }
@@ -112,6 +115,7 @@ struct AppStrings {
         case .autoStopped: return pick("已自动停止", "自動停止しました")
         case .bankGenerating: return pick("准备回答中", "回答を準備中")
         case .startupError, .generationError, .sttError: return pick("需要处理", "確認が必要です")
+        case .sttReconnecting: return pick("正在重连", "再接続中")
         case .creditLow: return pick("额度即将用完", "残りわずか")
         case .creditExhausted: return pick("额度已用完", "残高がありません")
         }
@@ -167,6 +171,12 @@ struct AppStrings {
         pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 NotchMeet。",
              "音声認識が許可されていません：システム設定 → プライバシーとセキュリティ → 音声認識 で NotchMeet を許可してください。")
     }
+    /// 云端语音识别连不上且重连多次未果（Key 失效 / 额度耗尽 / 网络不通）。
+    /// 必须显性告知——否则用户会盯着「聆听中」度过整场没有转写的面试。
+    func sttStreamUnavailable(_ detail: String) -> String {
+        pick("语音识别服务连接失败，已停止重试。请检查网络与 Deepgram 密钥后重新开始。（\(detail)）",
+             "音声認識サービスに接続できず、再試行を停止しました。ネットワークと Deepgram キーをご確認のうえ、再度開始してください。（\(detail)）")
+    }
     /// 端侧日语语音模型按需下载中的进度提示（下载完成后自动开始识别）。
     func sttModelDownloading(_ percent: Int) -> String {
         pick("正在下载日语语音模型（\(percent)%）…完成后会自动开始识别。",
@@ -201,6 +211,72 @@ struct AppStrings {
     }
     var save: String { pick("保存", "保存") }
     var cancel: String { pick("取消", "キャンセル") }
+    var ok: String { pick("好", "OK") }
+    var setupCodeConfirmTitle: String {
+        pick("这张码会替换你的服务密钥", "このコードはサービスキーを置き換えます")
+    }
+    func setupCodeConfirmBody(_ keys: String) -> String {
+        pick("""
+             将写入以下服务的密钥：
+             \(keys)
+
+             之后你的面试音频与稿件内容会发送到这张码所属的服务账号。只有当这张码来自你信任的来源时才继续。
+             """,
+             """
+             次のサービスのキーが書き込まれます：
+             \(keys)
+
+             以降、面接音声と原稿の内容はこのコードのサービスアカウントへ送信されます。信頼できる入手元の場合のみ続行してください。
+             """)
+    }
+    var setupCodeConfirmApply: String { pick("我信任这张码", "このコードを信頼する") }
+    var llmErrorMissingKey: String {
+        pick("没有可用的 API 密钥，请在设置里配置", "利用可能な API キーがありません。設定で登録してください")
+    }
+    func llmErrorAuth(_ code: Int) -> String {
+        pick("密钥无效或已被撤销（\(code)），请在设置里更新", "キーが無効か失効しています（\(code)）。設定で更新してください")
+    }
+    func llmErrorRateLimited(_ code: Int) -> String {
+        pick("服务繁忙（\(code)），稍等片刻会自动恢复", "サービスが混雑しています（\(code)）。少し待つと復旧します")
+    }
+    func llmErrorServer(_ code: Int) -> String {
+        pick("服务端故障（\(code)），已自动尝试备用服务", "サーバー側の障害です（\(code)）。予備のサービスを試しました")
+    }
+    func llmErrorGeneric(_ code: Int) -> String {
+        pick("请求失败（HTTP \(code)）", "リクエストに失敗しました（HTTP \(code)）")
+    }
+    var deleteIncompleteTitle: String {
+        pick("部分数据未能删除", "一部のデータを削除できませんでした")
+    }
+    func deleteIncompleteBody(_ items: String) -> String {
+        pick("以下项目仍然存在，请手动检查：\(items)",
+             "次の項目が残っています。手動でご確認ください：\(items)")
+    }
+    /// 流式中途断开：已上屏的部分仍可用，但要诚实标注可能不完整。
+    var answerMayBeIncomplete: String {
+        pick("连接中断，这段回答可能不完整", "接続が切れました。この回答は途中までの可能性があります")
+    }
+    /// provider 返回了零内容（安全拦截 / 空补全）。
+    var answerEmpty: String {
+        pick("这次没能生成回答，请换个说法再试一次", "回答を生成できませんでした。言い方を変えて再度お試しください")
+    }
+    var importFailedTitle: String { pick("没能读取这个文件", "このファイルを読み込めませんでした") }
+    var importUnreadable: String {
+        pick("无法打开文件——可能已被移动，或没有访问权限。",
+             "ファイルを開けませんでした——移動されたか、アクセス権がない可能性があります。")
+    }
+    var importUnknownEncoding: String {
+        pick("无法识别文件的文字编码。请用文本编辑器另存为 UTF-8 后重试，或直接复制粘贴正文。",
+             "文字エンコーディングを判別できませんでした。UTF-8 で保存し直すか、本文を直接貼り付けてください。")
+    }
+    /// 稿件没能落盘。这是本 app 最坏的失败：绝不能静默，也绝不能显示成功。
+    var scriptSaveFailedTitle: String {
+        pick("原稿没能保存", "原稿を保存できませんでした")
+    }
+    var scriptSaveFailedBody: String {
+        pick("这份原稿只存在于内存中，退出后会丢失。请检查磁盘空间与「文稿」访问权限后重试；先复制正文以免丢失。",
+             "この原稿はメモリ上にのみ存在し、終了すると失われます。ディスクの空き容量とアクセス権をご確認のうえ再試行してください。念のため本文をコピーしておいてください。")
+    }
     var deleteButton: String { pick("删除", "削除") }
     var deleteConfirmTitle: String {
         pick("确认删除全部本地数据？", "すべてのローカルデータを削除しますか？")
@@ -414,6 +490,12 @@ struct AppStrings {
     var walletRedeemExpired: String { pick("这个码已过期", "このコードは有効期限切れです") }
     var walletRedeemInvalid: String {
         pick("无法识别这个码——请确认复制完整", "コードを認識できません——全体をコピーしたかご確認ください")
+    }
+    /// 验签通过但账本没写进钥匙串（锁定/权限被拒）。必须如实告知：
+    /// 这张码没有被消耗，解锁钥匙串后可以原样重试。
+    var walletRedeemStorageFailed: String {
+        pick("未能保存到钥匙串——请解锁钥匙串后重试，这个码还没有被使用",
+             "キーチェーンに保存できませんでした——ロックを解除して再度お試しください。コードはまだ使われていません")
     }
     var walletBuyTitle: String { pick("需要更多时间？", "時間が足りませんか？") }
     var walletBuyBody: String {

@@ -106,15 +106,14 @@ final class WalletSection: SectionScroll {
             showFeedback(s.walletRedeemExpired, color: SK.warning)
         case .invalid:
             showFeedback(s.walletRedeemInvalid, color: SK.destructive)
+        case .storageFailed:
+            showFeedback(s.walletRedeemStorageFailed, color: SK.destructive)
         case .notACode:
             // 兼容 nmk1 设置码（运维发放：只激活服务，不入账）。
             if let keys = SetupCode.decode(raw) {
-                for (name, value) in keys {
-                    let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !v.isEmpty else { continue }
-                    Secrets.set(name, v)
-                    Settings.markKeyManaged(name, true)
-                }
+                // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+                guard SetupCode.confirmApply(keys) else { return }
+                KeyProvisioner.apply(keys, managed: true)
                 redeemField.stringValue = ""
                 showFeedback(s.walletRedeemKeysApplied, color: SK.accent)
                 onKeysChanged()

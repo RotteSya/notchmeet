@@ -42,6 +42,8 @@ final class TurnManager: @unchecked Sendable {
     //       本題が来たら、そのターンを開き直して〔表明＋本題〕を1問として答え直す（armMerge）。
     private var pendingQ = ""
     private var settleWork: DispatchWorkItem?
+    /// 最后一个被接受的终稿到达时刻（uptime ns），供 LatencyMonitor 拆分端点延迟。
+    private var lastFinalNs: UInt64 = 0
     /// 完了した質問・依頼（…か／？／…ください）だけ、この短い静寂で確定＝即答する。実面接の端末内
     /// 計測では質問の途中に入る息継ぎは 0.5〜0.8s なので、0.8s ならそれを跨がずに最速で出せる。
     /// ただの陳述文はここでは確定しない（settleWindowMax を使う）。FI_SETTLE_MS（ミリ秒）で上書き可。
@@ -112,6 +114,9 @@ final class TurnManager: @unchecked Sendable {
         }
         // S2: see exactly what the interviewer's speech was recognized as (+confidence).
         if sttDebug { NSLog("[stt] final(%.2f): %@", t.confidence, q) }
+        // 终稿到达时刻 —— 延迟拆分用。它把「等 STT 交付」与「我们 settle 等待」分开：
+        // 只看合并后的端点延迟时，一次 4.5s 无法区分该调窗口还是该查网络。
+        lastFinalNs = DispatchTime.now().uptimeNanoseconds
         // Layer 2 (recall-merge): the previous turn committed only a statement (setup) and the
         // interviewer has continued within the grace window → reopen that turn so the answer sees the
         // whole question, not just the tail. startTurn (fired by settle below) then supersedes the
@@ -189,7 +194,10 @@ final class TurnManager: @unchecked Sendable {
         let q = pendingQ.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingQ = ""
         guard !q.isEmpty, !paused else { return }
-        NSLog("[stt] Q: %@", q)
+        // 面试官问题原文只在显式开启 STT 调试时落日志。NSLog 默认 public，会进
+        // /var/db/diagnostics 保留数天，并随 sysdiagnose 一起外泄——而「删除本地数据」
+        // 清不掉系统日志。默认只记长度，足够诊断「有没有收到问题」。
+        if sttDebug { NSLog("[stt] Q: %@", q) } else { NSLog("[stt] Q received (%d chars)", q.count) }
         // Arm the recall-merge net only when committing a *statement*: a question that lands right
         // after should fold back in (layer 2). A completed question/request needs no net.
         lastCommittedQ = q
@@ -236,7 +244,7 @@ final class TurnManager: @unchecked Sendable {
         state = .generating
         liveBuffer = ""
         liveIsCommittedSource = false
-        latency.turnStart(myEpoch)
+        latency.turnStart(myEpoch, sttFinalNs: lastFinalNs)
 
         // 前ターンの答えはここでは消さない。新しい答えの先頭文が確定するまで（runRouter / runLive の
         // コミット点で上書き）画面に残し、考え中の一瞬だけ薄く表示する → 「答えが一度消える」体験を防ぐ。
@@ -247,11 +255,22 @@ final class TurnManager: @unchecked Sendable {
         model.status = .thinking
         model.message = .thinking
 
+        currentQuestion = question
+        // 面接は連続した会話：hist は路由与 grounding 都要用（同一隐私门）。
+        // 深掘り（「弊社ではどのように貢献できますか」接在ガクチカ回答之后）对孤立
+        // 处理是致命的——路由会误命中字面相近的过去经历稿，grounding 也拉不进
+        // 刚刚回答过的那条原稿。
+        var hist = ""
+        if Settings.sendContextToLLM {
+            hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
+        }
+
         // Source A: router/cache — user script (preferred) + AI bank, if any candidates.
         let cands = routeCandidates(for: question)
         if !cands.isEmpty {
             routerTask = Task { [weak self] in
-                await self?.runRouter(question: question, cands: cands, myEpoch: myEpoch)
+                await self?.runRouter(question: question, cands: cands, history: hist,
+                                      myEpoch: myEpoch)
             }
         }
 
@@ -259,15 +278,27 @@ final class TurnManager: @unchecked Sendable {
         // grounding so a miss still produces an answer consistent with the user's wording.
         // Gated on the privacy toggle: when the user has opted out, the resume facts and
         // script are NOT sent to the cloud LLM (answers become generic).
-        currentQuestion = question
         var ctx = ""
-        var hist = ""
         if Settings.sendContextToLLM {
             ctx = knowledge.context(for: question)
-            if let script = scriptStore?.contextBlock(for: question), !script.isEmpty {
+            // Grounding 的排序查询按问题类型选素材：
+            // - 指代型追问（「それを弊社で…」）：素材就是**被指代的那段**——只按上一个
+            //   问题排序。这同时把「活用/貢献」形状的错位桥接稿自然挤出上下文：system
+            //   prompt 会指示模型优先照抄标题相符的准备稿，错误稿一旦进入 grounding，
+            //   路由侧的否决就会在生成侧被绕过（实机已发生）。
+            // - 普通追问：当前问题混入上一问，刚答过的条目能作为素材。
+            let prevQ = history.last?.q ?? ""
+            let groundingQuery: String
+            if prevQ.isEmpty {
+                groundingQuery = question
+            } else if LLMRouter.isDeictic(question) {
+                groundingQuery = prevQ
+            } else {
+                groundingQuery = question + " " + prevQ
+            }
+            if let script = scriptStore?.contextBlock(for: groundingQuery), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
-            hist = historyText()   // same privacy gate as facts: opted out → no 流れ leaves the device
         }
         let req = GenRequest(question: question, context: ctx, history: hist)
         liveTask = Task { [weak self] in
@@ -288,8 +319,20 @@ final class TurnManager: @unchecked Sendable {
         return Array(cands.prefix(5))
     }
 
-    private func runRouter(question: String, cands: [BankEntry], myEpoch: Int) async {
-        let decision = try? await router.route(question: question, candidates: cands)
+    private func runRouter(question: String, cands: [BankEntry], history: String,
+                           myEpoch: Int) async {
+        let decision: RouteDecision? = await {
+            do {
+                return try await router.route(question: question, candidates: cands,
+                                              history: history)
+            } catch {
+                // 旧实现是 `try?`：路由 LLM 持续 429 时，整场面试从不命中原稿、全走 live
+                // 生成，与「真的没匹配上」在现场完全无法区分——正是「答案不是我准备的
+                // 回答」类事故的诊断盲区。
+                NSLog("[router] route failed (turn %d): %@", myEpoch, String(describing: error))
+                return nil
+            }
+        }()
         await MainActor.run { [weak self] in
             guard let self, myEpoch == self.epoch else { return }
             guard let d = decision else { return }
@@ -349,11 +392,24 @@ final class TurnManager: @unchecked Sendable {
                 }
             }
             await finishLive(myEpoch)
-        } catch is CancellationError {
+        } catch where Self.isCancellation(error) {
             // superseded — silent
         } catch {
             await failTurn(myEpoch, error: error)
         }
+    }
+
+    /// 取消不是故障。
+    ///
+    /// 这个区分是实测逼出来的：原稿命中时 `liveTask?.cancel()` 会取消 live 生成，
+    /// 而 **URLSession 用 `URLError.cancelled`(-999) 表达取消，不是 Swift 并发的
+    /// `CancellationError`**。只认后者的话，每一轮正常的缓存命中都会被当成「已提交后
+    /// 流中断」，给一条完好的逐字稿答案挂上「连接中断，这段回答可能不完整」的假警报。
+    /// 实测中 turn 5/6/7 连续三轮都命中了这条。
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
     }
 
     /// Never reveal an unstable half-sentence. Japanese sentence punctuation is the
@@ -376,7 +432,20 @@ final class TurnManager: @unchecked Sendable {
             model.message = .suggesting
         }
         guard liveIsCommittedSource else { return } // cache owns the turn
-        model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
+        let final = SpokenAnswerFormatter.normalize(liveBuffer)
+        guard !final.isEmpty else {
+            // provider 返回零内容（安全拦截/空补全）。旧实现照样 commit：刘海显示
+            // 「可直接作答」而正文空白——比明确报错更糟。
+            NSLog("[turn] live produced no usable text (turn %d)", myEpoch)
+            committedEpoch = -1
+            liveIsCommittedSource = false
+            model.answer = ""
+            model.status = .error
+            model.message = .generationError
+            model.errorDetail = AppStrings.current.answerEmpty
+            return
+        }
+        model.answer = final
         finishTurn(myEpoch)
     }
 
@@ -403,7 +472,21 @@ final class TurnManager: @unchecked Sendable {
     }
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
-        guard myEpoch == epoch, committedEpoch != myEpoch else { return }
+        guard myEpoch == epoch else { return }
+        guard committedEpoch != myEpoch else {
+            // 已经上屏之后才失败（网络中途断开）。旧实现在这里直接 return，回合永远停在
+            // .streaming：用户对着半截答案，状态行一直显示「生成中」，面板不折叠，
+            // 该回合也不进 history（下一问的深掘去重少一环），LatencyMonitor 还会漏账。
+            // 正确的收尾是把已有内容定格为完成态，并附上「可能不完整」的提示。
+            NSLog("[turn] stream failed after commit (turn %d): %@",
+                  myEpoch, String(describing: error))
+            if liveIsCommittedSource {
+                model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
+            }
+            model.errorDetail = AppStrings.current.answerMayBeIncomplete
+            finishTurn(myEpoch)
+            return
+        }
         model.answer = ""        // 未コミット → 残っている前ターンの答えを消し、エラーを見せる
         model.status = .error
         model.message = .generationError

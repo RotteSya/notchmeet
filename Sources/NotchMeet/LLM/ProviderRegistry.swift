@@ -3,24 +3,56 @@ import Foundation
 /// Selects concrete STT / LLM providers from available keys (Keychain → env).
 /// Falls back to mocks so the app always runs (PLAN §5 provider abstraction).
 enum ProviderRegistry {
+    /// 每个 resolution 对应的 key 名——`makeGeneratorChain` 与 `FastLLM` 共用。
+    static func keyName(for resolution: LLMResolution) -> String? {
+        switch resolution {
+        case .gemini:   return "GEMINI_API_KEY"
+        case .claude:   return "ANTHROPIC_API_KEY"
+        case .deepseek: return "DEEPSEEK_API_KEY"
+        case .qwen:     return "DASHSCOPE_API_KEY"
+        case .none:     return nil
+        }
+    }
+
+    private static func generator(for resolution: LLMResolution, key: String) -> AnswerGenerator? {
+        switch resolution {
+        case .gemini:   return GeminiAnswerGenerator(apiKey: key)
+        case .claude:   return ClaudeAnswerGenerator(apiKey: key)
+        case .deepseek: return OpenAIChatAnswerGenerator(endpoint: .deepseek, apiKey: key)
+        case .qwen:     return OpenAIChatAnswerGenerator(endpoint: .qwen, apiKey: key)
+        case .none:     return nil
+        }
+    }
+
+    /// 主选 provider 排头，其余持有 key 的按固定顺序顺延——供运行时降级。
+    /// 国内优先域内可直连服务的顺序由 `llmResolution()` 决定，这里只负责补齐候补。
+    static func makeGeneratorChain() -> (generators: [AnswerGenerator], names: [String]) {
+        let primary = llmResolution()
+        let order: [LLMResolution] = [.qwen, .deepseek, .gemini, .claude]
+        let ordered = [primary] + order.filter { $0 != primary }
+        var generators: [AnswerGenerator] = []
+        var names: [String] = []
+        for resolution in ordered {
+            guard let keyName = keyName(for: resolution),
+                  let key = Settings.apiKey(keyName), !key.isEmpty,
+                  let gen = generator(for: resolution, key: key) else { continue }
+            generators.append(gen)
+            names.append(String(describing: resolution))
+        }
+        return (generators, names)
+    }
+
     static func makeGenerator() -> AnswerGenerator {
-        switch llmResolution() {
-        case .gemini:
-            NSLog("[provider] LLM = Gemini")
-            return GeminiAnswerGenerator(apiKey: Settings.apiKey("GEMINI_API_KEY")!)
-        case .claude:
-            NSLog("[provider] LLM = Claude")
-            return ClaudeAnswerGenerator(apiKey: Settings.apiKey("ANTHROPIC_API_KEY")!)
-        case .deepseek:
-            NSLog("[provider] LLM = DeepSeek")
-            return OpenAIChatAnswerGenerator(endpoint: .deepseek, apiKey: Settings.apiKey("DEEPSEEK_API_KEY")!)
-        case .qwen:
-            NSLog("[provider] LLM = Qwen (DashScope)")
-            return OpenAIChatAnswerGenerator(endpoint: .qwen, apiKey: Settings.apiKey("DASHSCOPE_API_KEY")!)
-        case .none:
-            NSLog("[provider] no LLM key — using mock generator")
+        let (generators, names) = makeGeneratorChain()
+        guard !generators.isEmpty else {
+            // Keychain 在 resolve 与 build 之间被清空（或 ACL 被拒）也会落到这里——
+            // 旧实现在这一步 `!` 强制解包，等于面试中崩溃。
+            NSLog("[provider] no usable LLM key — using mock generator")
             return MockAnswerGenerator()
         }
+        NSLog("[provider] LLM = %@ (+%d fallback)", names[0], generators.count - 1)
+        guard generators.count > 1 else { return generators[0] }
+        return FallbackAnswerGenerator(chain: generators, names: names)
     }
 
     /// The LLM the app WILL use, given available keys + region. Single source of truth
@@ -65,8 +97,14 @@ enum ProviderRegistry {
             NSLog("[provider] STT = Apple on-device (ja-JP)")
             return AppleSpeechSttClient()
         case .deepgram:
+            guard let key = Settings.apiKey("DEEPGRAM_API_KEY"), !key.isEmpty else {
+                // resolve 与 build 之间 key 被清除 / Keychain ACL 被拒 →
+                // 旧实现在这里强制解包崩溃。降级为 mock，上层照常提示无可用引擎。
+                NSLog("[provider] Deepgram key vanished between resolve and build — mock STT")
+                return MockSttClient()
+            }
             NSLog("[provider] STT = Deepgram")
-            return DeepgramSttClient(apiKey: Settings.apiKey("DEEPGRAM_API_KEY")!,
+            return DeepgramSttClient(apiKey: key,
                                      language: Settings.interviewLanguage.deepgramCode)
         case .mock:
             NSLog("[provider] no STT — using mock STT")

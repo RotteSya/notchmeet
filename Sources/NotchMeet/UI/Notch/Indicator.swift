@@ -54,6 +54,9 @@ final class NotchStatusMark: NSView {
         if window != nil { retuneClock() } else { stopLink() }
     }
 
+    /// 待机（.ready 且未录音）持续这么久之后停钟。呼吸点在此定格。
+    static let readyBreathBudget: CFTimeInterval = 20
+
     /// nil = nothing is moving → clock off.
     private func desiredFPS(at t: CFTimeInterval) -> Float? {
         let settle = NotchPalette.contentDuration + 0.05
@@ -61,7 +64,13 @@ final class NotchStatusMark: NSView {
         switch status {
         case .thinking, .streaming: return 60
         case .listening: return 30
-        case .ready: return 20
+        case .ready:
+            // 待机是常驻 app 的默认状态。旧实现在 .ready 恒返回 20，于是这颗 4.5pt 的
+            // 呼吸点成了待机链上唯一不睡的钟：挂机一整天 = 20Hz × 86400s 的主线程唤醒
+            // 加整视图重绘，阻止系统进入深度 idle（对比 NotchLuma 收敛后会真正停摆）。
+            // 录音时保留呼吸（用户需要「它还活着」的信号）；单纯待机则在 20s 后定格。
+            if recording { return 20 }
+            return (t - statusChangedAt) < Self.readyBreathBudget ? 20 : nil
         case .presenting, .error: return nil
         }
     }

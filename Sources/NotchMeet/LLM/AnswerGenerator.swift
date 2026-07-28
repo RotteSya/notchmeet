@@ -18,17 +18,25 @@ protocol AnswerGenerator: AnyObject {
 /// formatting instructions and emit bullets or Markdown. Normalize those markers before
 /// anything reaches the notch; user-authored scripts never pass through this type.
 enum SpokenAnswerFormatter {
+    /// 预编译一次。旧实现用 `replacingOccurrences(options: .regularExpression)`，
+    /// 每一行、每一次调用都重新编译一遍 NSRegularExpression —— 而流式期每个 delta
+    /// 都会对**整个** liveBuffer 重跑 normalize，叠加起来是主线程上的 O(n²)。
+    private static let leadMarker = try? NSRegularExpression(
+        pattern: #"^(?:[-*+•・]\s*|[0-9０-９]+[.)．、]\s*|#{1,6}\s*)"#)
+
+    private static func stripLeadMarker(_ s: String) -> String {
+        guard let re = leadMarker else { return s }
+        let range = NSRange(s.startIndex..., in: s)
+        return re.stringByReplacingMatches(in: s, range: range, withTemplate: "")
+    }
+
     static func normalize(_ raw: String) -> String {
         raw.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
             .compactMap { line -> String? in
                 var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                text = text.replacingOccurrences(
-                    of: #"^(?:[-*+•・]\s*|[0-9０-９]+[.)．、]\s*|#{1,6}\s*)"#,
-                    with: "",
-                    options: .regularExpression
-                )
+                text = stripLeadMarker(text)
                 for marker in ["**", "__", "`"] {
                     text = text.replacingOccurrences(of: marker, with: "")
                 }

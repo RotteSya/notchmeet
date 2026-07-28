@@ -39,6 +39,8 @@ struct OnboardingView: View {
     @ObservedObject private var languageStore = AppLanguageStore.shared
     @State private var step = 0
     @State private var scriptText = ""
+    /// 导入失败的原因（编码识别不出 / 打不开）。非 nil 时在导入区下方显示。
+    @State private var importError: String?
     @State private var permAttempted = false
     @State private var permGranted = false
     @State private var setupCode = ""           // pasted activation code (nmk1.…); empty = leave as-is
@@ -294,6 +296,17 @@ struct OnboardingView: View {
 
             ScriptEditor(text: $scriptText, placeholder: t.phScript, dropHint: t.dropHint)
                 .frame(height: 82)
+
+            // 文件读不进来时必须说明原因——旧实现是静默 no-op，用户完全无从判断。
+            if let importError {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    Text(importError)
+                        .font(.system(size: 11)).foregroundStyle(OB.ink.opacity(0.75))
+                        .fixedSize(horizontal: false, vertical: true)
+                }.padding(.top, 10)
+            }
 
             if !recognized.isEmpty {
                 HStack(spacing: 7) {
@@ -619,9 +632,12 @@ struct OnboardingView: View {
         panel.allowedContentTypes = types
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url,
-           let s = try? String(contentsOf: url, encoding: .utf8) {
-            withAnimation(OB.spring) { scriptText = s }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let s = try TextFileReader.read(url)
+            withAnimation(OB.spring) { scriptText = s; importError = nil }
+        } catch {
+            withAnimation(OB.spring) { importError = error.localizedDescription }
         }
     }
 
@@ -669,11 +685,10 @@ struct OnboardingView: View {
             return
         }
         guard let keys = SetupCode.decode(raw) else { return }
-        for (name, value) in keys {
-            let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !v.isEmpty else { continue }
-            saveKey(name, v)
-            Settings.markKeyManaged(name, true)   // 码发放的 Key＝受管（计量）
+        // nmk1 无签名，任何人可造 → 应用前必须让用户看清会改写哪些服务。
+        guard SetupCode.confirmApply(keys) else { return }
+        KeyProvisioner.apply(keys, managed: true)   // 码发放的 Key＝受管（计量）
+        for (name, value) in keys where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if name == "DEEPGRAM_API_KEY" { deepgramSet = true } else { llmSet = true }
         }
         setupCode = ""
@@ -789,7 +804,7 @@ private struct ScriptEditor: View {
         .onDrop(of: [.fileURL], isTargeted: $dragging) { providers in
             guard let p = providers.first else { return false }
             _ = p.loadObject(ofClass: URL.self) { url, _ in
-                guard let url, let s = try? String(contentsOf: url, encoding: .utf8) else { return }
+                guard let url, let s = try? TextFileReader.read(url) else { return }
                 DispatchQueue.main.async { withAnimation(OB.spring) { text = s } }
             }
             return true

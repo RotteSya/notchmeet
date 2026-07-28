@@ -15,14 +15,35 @@ final class KnowledgePathsTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: cwd + "/knowledge",
                                                 withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: cwd) }
-        let dir = KnowledgePaths.resolve(env: [:], cwd: cwd, appSupport: "/apps")
+        let dir = KnowledgePaths.resolve(env: [:], cwd: cwd, appSupport: "/apps",
+                                         allowCwd: true)
         XCTAssertEqual(dir, cwd + "/knowledge")
     }
 
     func testFallsBackToAppSupportWhenCwdHasNoKnowledgeDir() {
         // release: cwd = "/"（/knowledge 不存在也不可写）→ 必须走 App Support
-        let dir = KnowledgePaths.resolve(env: [:], cwd: "/", appSupport: "/apps")
+        let dir = KnowledgePaths.resolve(env: [:], cwd: "/", appSupport: "/apps",
+                                         allowCwd: true)
         XCTAssertEqual(dir, "/apps/notchmeet")
+    }
+
+    /// release 构建必须无视 cwd/knowledge：Finder 启动时 cwd = "/"，若别的工具
+    /// 在根目录建了 /knowledge，用户稿件会写进那里并与 App Support 的数据分裂。
+    func testReleaseIgnoresCwdKnowledgeEvenIfItExists() throws {
+        let cwd = NSTemporaryDirectory() + "kp-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: cwd + "/knowledge",
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: cwd) }
+        let dir = KnowledgePaths.resolve(env: [:], cwd: cwd, appSupport: "/apps",
+                                         allowCwd: false)
+        XCTAssertEqual(dir, "/apps/notchmeet")
+    }
+
+    /// 环境覆盖优先级高于一切，QA/测试钩子在任何构建上都要可用。
+    func testEnvOverrideWinsEvenWhenCwdDisallowed() {
+        let dir = KnowledgePaths.resolve(env: ["FI_KNOWLEDGE_DIR": "/tmp/kn"],
+                                         cwd: "/", appSupport: "/apps", allowCwd: false)
+        XCTAssertEqual(dir, "/tmp/kn")
     }
 }
 
@@ -78,6 +99,8 @@ final class ScriptStorePersistenceTests: XCTestCase {
 }
 
 final class AnswerBankPersistenceTests: XCTestCase {
+    /// `replaceAll` 是主线程隔离的（与 TurnManager 的读同域），测试也走主线程。
+    @MainActor
     func testBankSurvivesRelaunch() {
         let dir = NSTemporaryDirectory() + "ab-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: dir) }
