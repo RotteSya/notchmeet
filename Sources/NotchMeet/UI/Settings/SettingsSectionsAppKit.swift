@@ -283,7 +283,10 @@ final class AnswerSection: SectionScroll {
             Settings.sttEngine = engines[idx]
             onEngineChanged()
         }
-        constrain(seg, width: 270, height: 30)
+        // 宽度交给控件自己量：引擎名（Deepgram 云端 / Apple 本地（离线）、日文更长）比等分格宽，
+        // 钉死宽度会让相邻两段文字压在一起。只钉高度，横向按最宽标签排。
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        seg.heightAnchor.constraint(equalToConstant: 30).isActive = true
         let engineRow = SKBuild.stackedControl(s.sttEngineLabel, control: seg, help: s.sttEngineHelp)
 
         spinner.style = .spinning
