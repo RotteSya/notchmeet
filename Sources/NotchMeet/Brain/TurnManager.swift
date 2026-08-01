@@ -31,6 +31,12 @@ final class TurnManager: @unchecked Sendable {
     private var liveTask: Task<Void, Never>?
     private var routerTask: Task<Void, Never>?
     private var currentQuestion = ""
+    /// 本轮答案的来源，供复盘统计（哪些问题命中了我准备的内容、哪些是现场编的）。
+    private var currentSource: AnswerSource = .live
+    /// 一轮定稿后回调（question, answer, source）。AppController 接到 SessionStore。
+    var onTurnRecorded: ((String, String, AnswerSource) -> Void)?
+    /// recall-merge 撤回过早定稿的那一轮（与下面 history.removeLast 同一时机）。
+    var onTurnRetracted: ((String) -> Void)?
     private var history: [(q: String, a: String)] = []   // 深掘り context
 
     // Utterance coalescing (§6). 面接官は一続きの発話で「意見の表明・前置き＋本題」を話す：
@@ -134,6 +140,7 @@ final class TurnManager: @unchecked Sendable {
             disarmMerge()
             pendingQ = lastCommittedQ
             if history.last?.q == lastCommittedQ { history.removeLast() }
+            onTurnRetracted?(lastCommittedQ)
             NSLog("[turn] merge-recall: folding follow-up into prior setup")
         }
         pendingQ = pendingQ.isEmpty ? q : pendingQ + " " + q
@@ -268,6 +275,27 @@ final class TurnManager: @unchecked Sendable {
         model.message = .thinking
 
         currentQuestion = question
+        currentSource = .live
+
+        // Source 0：确定性事实即答。数字・条件系（希望年収 / 入社可能時期 / 語学スコア）
+        // 命中就地上屏并**不启动**另外两路——命中即定稿，不存在被覆盖的问题。
+        //
+        // 刻意不受 `Settings.sendContextToLLM` 约束：那道门管的是「要不要把事实发到云端」，
+        // 而这条路径全在本机、一个字节都不出网。关掉隐私开关的用户恰恰最需要这类即答，
+        // 拿它当门会把功能反向关掉。
+        if let facts = knowledge as? FactStore,
+           let quick = FactQuickAnswer.answer(for: question, facts: facts) {
+            // startTurn 本身非隔离，但本类的契约是「所有状态与 model 写入都串行在主队列上」
+            // （见类型注释）；commitAnswer 已按该契约标了 @MainActor。
+            MainActor.assumeIsolated {
+                currentSource = .fact
+                committedEpoch = myEpoch
+                latency.markFirstReadable(epoch: myEpoch, kind: .fact)
+                commitAnswer(quick, myEpoch: myEpoch)   // 内含 finishTurn：history / 回看 / 计时收尾
+            }
+            return
+        }
+
         // 面接は連続した会話：hist は路由与 grounding 都要用（同一隐私门）。
         // 深掘り（「弊社ではどのように貢献できますか」接在ガクチカ回答之后）对孤立
         // 处理是致命的——路由会误命中字面相近的过去经历稿，grounding 也拉不进
@@ -354,6 +382,7 @@ final class TurnManager: @unchecked Sendable {
                 // Cache wins the turn.
                 self.committedEpoch = myEpoch
                 self.liveTask?.cancel()
+                self.currentSource = self.sourceOfCachedAnswer(ans)
                 self.latency.markFirstReadable(epoch: myEpoch, kind: .cache)
                 self.commitAnswer(ans, myEpoch: myEpoch)
             } else if self.liveIsCommittedSource, self.state != .presenting {
@@ -364,6 +393,7 @@ final class TurnManager: @unchecked Sendable {
                 NSLog("[router] late hit (turn %d): replacing streaming live answer with 原稿", myEpoch)
                 self.liveTask?.cancel()
                 self.liveIsCommittedSource = false   // late live deltas are dropped by runLive's guard
+                self.currentSource = self.sourceOfCachedAnswer(ans)
                 self.commitAnswer(ans, myEpoch: myEpoch)
             } else {
                 // Diagnosability: before this log existed, a lost race was indistinguishable
@@ -371,6 +401,13 @@ final class TurnManager: @unchecked Sendable {
                 NSLog("[router] late hit (turn %d): answer already settled — 原稿 dropped", myEpoch)
             }
         }
+    }
+
+    /// 命中的这条是用户手写的原稿，还是 AI 预生成的答案库？复盘页要分开呈现：
+    /// bank 也算「准备到了」，但内容是模板化的，命中率高不代表回答有竞争力。
+    private func sourceOfCachedAnswer(_ answer: String) -> AnswerSource {
+        if scriptStore?.active?.entries.contains(where: { $0.answer == answer }) == true { return .script }
+        return .bank
     }
 
     @MainActor private func commitAnswer(_ ans: String, myEpoch: Int) {
@@ -472,6 +509,7 @@ final class TurnManager: @unchecked Sendable {
         // 按 epoch 就地更新才不会把同一轮堆成两条（面试官重复同一问题时也不会误合并）。
         answerHistory?.record(epoch: myEpoch, question: currentQuestion,
                               answer: model.answer, intent: model.intentLabel)
+        onTurnRecorded?(currentQuestion, model.answer, currentSource)
     }
 
     private func recordHistory() {

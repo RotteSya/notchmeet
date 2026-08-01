@@ -14,7 +14,9 @@ import Foundation
 /// noise keeps it near "now", shrinking the measured endpoint delay. Cleanest with a
 /// per-process tap (S1 refinement) or offline waveform ground-truth.
 final class LatencyMonitor {
-    enum TurnKind: String { case cache, live }
+    /// `fact` = 本机确定性事实即答（不走网络，几乎 0ms）。单列一档而不是并进 cache：
+    /// 混进去会把缓存命中的 p50/p95 分布整体拉平，之后再也看不出路由到底快不快。
+    enum TurnKind: String { case cache, live, fact }
 
     /// Supplies the last-voiced uptime (ns) from the audio path; 0/unknown → use endpoint.
     var voicedClock: (() -> UInt64)?

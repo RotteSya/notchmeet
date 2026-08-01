@@ -15,6 +15,8 @@ final class AppController {
     private let inactivity = InactivityMonitor()
     /// 本场已显示过的回答（全文，仅内存）。被追问打断时用 ⌘⇧B 回看上一条。
     private lazy var answerHistory = AnswerHistory(model: notch.model)
+    /// 面试复盘记录（仅本机、可关、进「删除本地数据」）。
+    private let sessions = SessionStore()
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
     private let demoVoice = DemoVoice()
@@ -135,6 +137,13 @@ final class AppController {
         inactivity.onTimeout = { [weak self] in self?.autoStopForInactivity() }
     }
 
+    /// 进程退出前的收尾。菜单里的「退出」走 NSApp.terminate，不经过 stopRecording——
+    /// 而 sessions.end() 只在那里调用，于是录音中直接退出会把整场复盘丢掉（record()
+    /// 只改了内存里的当前会话）。stopRecording 幂等，未在录音时这里什么也不做。
+    func prepareForTermination() {
+        if recording { stopRecording() } else { sessions.end() }
+    }
+
     /// (Re)start the pipeline per AppConfig + current keys. Called at launch and
     /// whenever keys change from the menu.
     private func reloadPipeline() {
@@ -213,6 +222,7 @@ final class AppController {
             // 新一场面试：上一场的回答不能出现在这一场的回看里（拿上一家公司的答案
             // 回答这一家，正是这个 app 最不能犯的错）。
             answerHistory.reset()
+            sessions.begin(scriptName: scriptStore.active?.displayLabel)
             setRecording(true)
             credit.beginSession(metered: metered)
             startConnectionKeepWarm()
@@ -283,6 +293,9 @@ final class AppController {
         stopConnectionKeepWarm()
         captureStarted = false
         setRecording(false)
+        // 本场落盘供复盘。stopRecording 是幂等的（多条 teardown 路径都会走到），
+        // SessionStore.end 对「没有进行中的会话」同样幂等。
+        sessions.end()
         enterReady()
     }
 
@@ -383,6 +396,8 @@ final class AppController {
                      sttConnected: stt?.isConnected ?? false, deepgramKey: dgKey, llm: llm,
                      llmChinaBlocked: ProviderRegistry.llmChinaBlocked(),
                      screenShareGuard: notch.screenShareGuarded,
+            activeScript: scriptStore.active?.displayLabel,
+            hasScriptsButNoneActive: scriptStore.activeID == nil && !scriptStore.all.isEmpty,
                      // 只对「会被计量」的配置显示额度——全 BYO 的用户没有额度概念。
                      creditSeconds: CreditPolicy.sessionIsMetered() ? credit.balanceSeconds : nil)
     }
@@ -433,11 +448,15 @@ final class AppController {
     /// pipeline restart. Key changes reload the pipeline (may flip mock⇄live).
     private func openSettings(section: SettingsSection? = nil) {
         if settingsWindow == nil {
-            let s = SettingsWindowController(store: scriptStore, factStore: facts)
+            let s = SettingsWindowController(store: scriptStore, factStore: facts, sessionStore: sessions)
             s.onKeysChanged = { [weak self] in self?.reloadPipeline() }
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in
                 let failures = LocalData.deleteAll()
+                // 内存里的复盘记录必须一并清掉。只删文件的话：复盘页照样列出已删的
+                // 转录，而下一次会话结束时 save() 会把内存中留存的整份历史又写回磁盘
+                // ——「已删除」当场变成假话。
+                self?.sessions.clear()
                 self?.facts.reload(); self?.bank.reload(); self?.scriptStore.reload(); self?.reloadPipeline()
                 // 「已删除」是一句隐私承诺，不能建立在被吞掉的错误上。
                 guard !failures.isEmpty else { return }
@@ -565,6 +584,10 @@ final class AppController {
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.onTurnRecorded = { [weak self] q, a, source in
+            self?.sessions.record(question: q, answer: a, source: source)
+        }
+        tm.onTurnRetracted = { [weak self] q in self?.sessions.retractLast(question: q) }
         tm.paused = true
         stt.onTranscript = { [weak tm] t in
             DispatchQueue.main.async { tm?.handleTranscript(t) }
@@ -606,6 +629,10 @@ final class AppController {
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.onTurnRecorded = { [weak self] q, a, source in
+            self?.sessions.record(question: q, answer: a, source: source)
+        }
+        tm.onTurnRetracted = { [weak self] q in self?.sessions.retractLast(question: q) }
         tm.paused = true   // ignore transcripts until the session actually starts
 
         sttc.onTranscript = { [weak tm, weak self] t in
@@ -736,7 +763,10 @@ final class AppController {
             model.intentLabel = "自己紹介"; model.answer = answer
         case "overflow":
             model.recording = true; model.status = .presenting; model.message = .completed
-            model.intentLabel = "長文回答"; model.answer = Array(repeating: answer, count: 3).joined()
+            // 8 段 ≈ 1000 字：必须真的超过 NotchMetrics.maxAnswerHeight，否则这个
+            // fixture 就验不到「封顶 + 区内滚动 + 渐隐」那条路径（封顶前 3 段就够溢出屏幕，
+            // 封顶后 3 段落在上限之内）。
+            model.intentLabel = "長文回答"; model.answer = Array(repeating: answer, count: 8).joined()
         case "error":
             model.recording = true; model.status = .error; model.message = .generationError
             model.errorDetail = "接続を確認してください。"

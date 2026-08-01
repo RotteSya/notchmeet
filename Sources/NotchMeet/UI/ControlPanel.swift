@@ -19,6 +19,10 @@ final class ControlPanel: NSObject {
         /// 国内网络 + 解析结果是被墙端点（Gemini/Claude）：LLM 行降级为 ⚠️ 并附提示。
         var llmChinaBlocked = false
         var screenShareGuard = false
+        /// 本场选用的稿件（含公司名）。nil = 一份都没选。
+        var activeScript: String?
+        /// 库里有稿但一份都没选 —— 静默地整场不命中，必须标出来。
+        var hasScriptsButNoneActive = false
         /// 剩余额度秒数；nil = 本机全 BYO/本地（额度概念不适用，菜单不显示）。
         var creditSeconds: Int?
         static let empty = Health()
@@ -89,6 +93,13 @@ final class ControlPanel: NSObject {
                 addInfo(menu, "      \(t.llmChinaBlockedWarning)")
             }
             addInfo(menu, "   \(t.screenShareGuard)  \(h.screenShareGuard ? "✓" : "⚠️")")
+            // 本场用稿：拿 A 公司的稿进 B 公司面试是最致命的静默失败，
+            // 而此前一级菜单里根本看不到当前用的是哪一份（只藏在二级子菜单）。
+            if let script = h.activeScript {
+                addInfo(menu, "   \(t.thisInterviewScript)  ✓ \(script)")
+            } else {
+                addInfo(menu, "   \(t.thisInterviewScript)  \(h.hasScriptsButNoneActive ? "⚠️" : "・")  \(t.scriptNone)")
+            }
             // 额度行：受管服务的用户一眼看到还能面多久；<10 分钟标 ⚠️ 提醒面前充值。
             if let credit = h.creditSeconds {
                 let mark = credit <= 0 ? "✗" : (credit <= 600 ? "⚠️" : "✓")
@@ -132,7 +143,7 @@ final class ControlPanel: NSObject {
         let data = scriptsProvider?() ?? (scripts: [], activeID: nil)
         for s in data.scripts {
             let on = s.id == data.activeID
-            let item = NSMenuItem(title: "\(on ? "✓ " : "")\(s.name)（\(t.scriptCount(s.entries.count))）",
+            let item = NSMenuItem(title: "\(on ? "✓ " : "")\(s.displayLabel) · \(t.scriptCount(s.entries.count))",
                                   action: #selector(scriptTapped(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = s.id

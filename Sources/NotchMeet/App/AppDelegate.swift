@@ -8,4 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.start()
         self.controller = controller
     }
+
+    /// 录音中直接退出（菜单「退出」→ NSApp.terminate）不经过 stopRecording，
+    /// 本场复盘会连同内存一起蒸发。
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.prepareForTermination()
+    }
 }

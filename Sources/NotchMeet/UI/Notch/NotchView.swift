@@ -365,7 +365,11 @@ final class NotchView: NSView {
 
         let display = model.answer.isEmpty ? answerLabel.attributedStringValue.string
                                            : lastQuestionAnswerText()
-        let answerH = NotchType.answerHeight(display, empty: model.answer.isEmpty, width: contentW)
+        // 与 NotchController.expandedHeight 同源封顶；再夹一次卡片剩余高度，吸收
+        // 「控制器按固定 chrome 估算、这里按实际累加」之间的余量差。
+        let measured = NotchType.answerHeight(display, empty: model.answer.isEmpty, width: contentW)
+        let available = max(0, size.height - y - NotchMetrics.answerBottomInset)
+        let answerH = min(measured, NotchMetrics.maxAnswerHeight, available)
         let answerFrame = CGRect(x: contentX, y: y, width: contentW, height: answerH)
         answerLabel.frame = answerFrame
         answerStream.frame = answerFrame

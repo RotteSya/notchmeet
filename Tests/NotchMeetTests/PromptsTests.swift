@@ -10,6 +10,19 @@ final class PromptsTests: XCTestCase {
         XCTAssertTrue(system.contains("深掘り"))
     }
 
+    /// 面接官が一息に二問三問聞くのは普通（TurnManager は settle 窓内の finals を
+    /// 一つの質問に束ねる）。system prompt に「順に一つずつ答える」指示が無いと、
+    /// モデルは最初か最後の一問だけ答えて残りを落とす。
+    func testSystemPromptRequiresAnsweringEveryQuestionInAMultiPartAsk() {
+        let system = Prompts.system(context: "")
+        XCTAssertTrue(system.contains("複数含まれている"), "多问场景没有被提及")
+        XCTAssertTrue(system.contains("聞かれた順に一つずつ"), "缺少「逐一作答」指令")
+        XCTAssertTrue(system.contains("残りを落とさない"), "缺少「不得漏答」指令")
+        // 多问时放宽字数，但仍不许变成条目
+        XCTAssertTrue(system.contains("字数の目安を超えてよい"))
+        XCTAssertTrue(system.contains("箇条書きにはせず"))
+    }
+
     /// Stage A: with history present, the user prompt explains what the running 流れ is FOR
     /// (dedup + deepen) instead of dumping it as bare context.
     func testUserPromptFramesHistoryForDedup() {

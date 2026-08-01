@@ -137,12 +137,13 @@ final class ScriptsSection: FlippedView {
         let editor: ScriptEditorView
         switch target {
         case .new(let name, let text):
-            editor = ScriptEditorView(title: s.newScriptTitle, name: name, text: text,
+            editor = ScriptEditorView(title: s.newScriptTitle, name: name, company: "", text: text,
                                       onCancel: { [weak self] in self?.showList(animated: true); self?.editing = false },
-                                      onSave: { [weak self] newName, entries in
+                                      onSave: { [weak self] newName, newCompany, entries in
                                           guard let self else { return }
                                           let saved = self.store.add(
                                               name: self.resolvedName(newName, entries: entries),
+                                              company: newCompany,
                                               entries: entries) != nil
                                           self.editing = false
                                           self.showList(animated: true)
@@ -152,11 +153,13 @@ final class ScriptsSection: FlippedView {
             let script = store.all.first { $0.id == id }
             editor = ScriptEditorView(title: script?.name ?? s.editScript,
                                       name: script?.name ?? "",
+                                      company: script?.company ?? "",
                                       text: store.conventionText(for: id),
                                       onCancel: { [weak self] in self?.showList(animated: true); self?.editing = false },
-                                      onSave: { [weak self] newName, entries in
+                                      onSave: { [weak self] newName, newCompany, entries in
                                           guard let self else { return }
-                                          let saved = self.store.update(id: id, name: newName, entries: entries)
+                                          let saved = self.store.update(id: id, name: newName,
+                                                                        company: newCompany, entries: entries)
                                           self.editing = false
                                           self.showList(animated: true)
                                           if !saved { self.presentSaveFailure() }
@@ -351,7 +354,8 @@ final class ScriptRowView: FlippedView {
             }
         }
 
-        let meta = SKText.label("\(s.scriptCount(script.entries.count)) · \(s.scriptUpdated(dateText))",
+        let companyPrefix = (script.company?.isEmpty == false) ? "\(script.company!) · " : ""
+        let meta = SKText.label("\(companyPrefix)\(s.scriptCount(script.entries.count)) · \(s.scriptUpdated(dateText))",
                                 font: SK.font(11), color: SK.tertiary)
         let leftCol = NSStackView(views: [nameLine, meta])
         leftCol.orientation = .vertical
@@ -438,9 +442,10 @@ final class ActiveBadge: NSView {
 
 final class ScriptEditorView: FlippedView {
     private let onCancel: () -> Void
-    private let onSave: (String, [BankEntry]) -> Void
+    private let onSave: (String, String, [BankEntry]) -> Void
 
     private var nameField: SKField!
+    private var companyField: SKField!
     private var well: SKTextWell!
     private var preview: NSTextField!
     private var saveBtn: SKButton!
@@ -451,16 +456,17 @@ final class ScriptEditorView: FlippedView {
 
     private var s: AppStrings { AppStrings(language: AppLanguageStore.shared.language) }
 
-    init(title: String, name: String, text: String,
-         onCancel: @escaping () -> Void, onSave: @escaping (String, [BankEntry]) -> Void) {
+    init(title: String, name: String, company: String, text: String,
+         onCancel: @escaping () -> Void,
+         onSave: @escaping (String, String, [BankEntry]) -> Void) {
         self.onCancel = onCancel
         self.onSave = onSave
         super.init(frame: .zero)
-        build(title: title, name: name, text: text)
+        build(title: title, name: name, company: company, text: text)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func build(title: String, name: String, text: String) {
+    private func build(title: String, name: String, company: String, text: String) {
         let s = self.s
         let backBtn = SKButton(s.back, systemImage: "chevron.left", kind: .plain, action: onCancel)
         let titleLabel = SKBuild.pageTitle(title)
@@ -476,6 +482,12 @@ final class ScriptEditorView: FlippedView {
         nameField = SKField(placeholder: s.scriptNamePlaceholder)
         nameField.stringValue = name
         nameField.translatesAutoresizingMaskIntoConstraints = false
+
+        // 这份稿是给哪家公司的。面试当天能在自检里一眼看到公司名，是「拿错稿」
+        // 这个最致命失败模式唯一的拦截点。
+        companyField = SKField(placeholder: s.scriptCompanyPlaceholder)
+        companyField.stringValue = company
+        companyField.translatesAutoresizingMaskIntoConstraints = false
 
         let desc = SKBuild.help(s.prepDescription, color: SK.secondary, size: 11.5)
         desc.translatesAutoresizingMaskIntoConstraints = false
@@ -499,7 +511,7 @@ final class ScriptEditorView: FlippedView {
         well.translatesAutoresizingMaskIntoConstraints = false
         well.onChange = { [weak self] _ in self?.refreshPreview() }
 
-        [headerRow, nameField, desc, previewRow, well].forEach { addSubview($0) }
+        [headerRow, nameField, companyField, desc, previewRow, well].forEach { addSubview($0) }
         let inset: CGFloat = 32
         NSLayoutConstraint.activate([
             headerRow.topAnchor.constraint(equalTo: topAnchor, constant: 24),
@@ -511,7 +523,12 @@ final class ScriptEditorView: FlippedView {
             nameField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             nameField.heightAnchor.constraint(equalToConstant: 34),
 
-            desc.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 12),
+            companyField.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 10),
+            companyField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            companyField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            companyField.heightAnchor.constraint(equalToConstant: 34),
+
+            desc.topAnchor.constraint(equalTo: companyField.bottomAnchor, constant: 12),
             desc.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             desc.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
@@ -573,7 +590,7 @@ final class ScriptEditorView: FlippedView {
     private func commit() {
         let p = parsed
         guard !p.isEmpty else { return }
-        onSave(nameField.stringValue, p)
+        onSave(nameField.stringValue, companyField.stringValue, p)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
