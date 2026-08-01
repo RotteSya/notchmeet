@@ -206,13 +206,25 @@ final class SKSegmented: NSControl {
     private var tracking: NSTrackingArea?
     private var hoverIndex: Int = -1
 
+    /// Widest label, measured once — `titles` never change, and Auto Layout asks for the
+    /// intrinsic size on every pass.
+    private let widestTitle: CGFloat
+
     init(titles: [String], selected: Int, action: @escaping (Int) -> Void) {
         self.titles = titles
         self.selected = selected
         self.onChange = action
         self.thumb = Spring(CGFloat(selected), stiffness: 360, damping: 30)
+        // Measured at the *selected* (semibold) weight — the lit segment is the widest state
+        // a label ever draws in, and a slot sized for the medium weight would clip on selection.
+        self.widestTitle = titles
+            .map { SKText.attributed($0, font: SK.font(12.5, .semibold), color: .white).size().width }
+            .max()?.rounded(.up) ?? 0
         super.init(frame: .zero)
         wantsLayer = true
+        // Natural width is a preference, not a demand: a row narrower than the segments can
+        // hold squeezes the control and the labels truncate (below) rather than overflowing it.
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setAccessibilityRole(.radioGroup)
         loopHost = DisplayLoop(host: self)
         loopHost?.onTick = { [weak self] dt in self?.tick(dt) ?? false }
@@ -224,11 +236,8 @@ final class SKSegmented: NSControl {
     override var isFlipped: Bool { true }
 
     /// Segments are equal width, so the natural size is the widest label plus breathing room.
-    /// Measured at the *selected* (semibold) weight — the lit segment is the widest state a
-    /// label ever draws in, and a slot sized for the medium weight would clip on selection.
     override var intrinsicContentSize: NSSize {
-        let widest = titles.map { SKText.attributed($0, font: SK.font(12.5, .semibold), color: .white).size().width }.max() ?? 0
-        return NSSize(width: max(180, (widest.rounded(.up) + Self.segPad) * CGFloat(titles.count) + 4), height: 30)
+        NSSize(width: max(180, (widestTitle + Self.segPad) * CGFloat(titles.count) + 4), height: 30)
     }
     private static let segPad: CGFloat = 20
 
