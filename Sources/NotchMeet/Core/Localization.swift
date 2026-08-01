@@ -498,6 +498,9 @@ struct AppStrings {
     var addByPaste: String { pick("粘贴新建", "貼り付けて新規作成") }
     var newScriptTitle: String { pick("新建原稿", "新規原稿") }
     var scriptNamePlaceholder: String { pick("原稿名称", "原稿の名前") }
+    var scriptCompanyPlaceholder: String {
+        pick("公司名（选填，面试当天自检里会显示）", "会社名（任意・面接当日の自己チェックに表示）")
+    }
     var back: String { pick("返回", "戻る") }
     var scriptsEmptyTitle: String { pick("还没有面试原稿", "面接原稿がありません") }
     var scriptsEmptyHint: String {

@@ -383,6 +383,8 @@ final class AppController {
                      sttConnected: stt?.isConnected ?? false, deepgramKey: dgKey, llm: llm,
                      llmChinaBlocked: ProviderRegistry.llmChinaBlocked(),
                      screenShareGuard: notch.screenShareGuarded,
+            activeScript: scriptStore.active?.displayLabel,
+            hasScriptsButNoneActive: scriptStore.activeID == nil && !scriptStore.all.isEmpty,
                      // 只对「会被计量」的配置显示额度——全 BYO 的用户没有额度概念。
                      creditSeconds: CreditPolicy.sessionIsMetered() ? credit.balanceSeconds : nil)
     }
