@@ -7,6 +7,9 @@ import Foundation
 /// headings, Q/A labels, numbered topics, bracketed topics, plain question lines and
 /// two-column Markdown tables. Answers are otherwise kept verbatim.
 enum ScriptParser {
+    /// 只有显式开启时才把用户稿件的标题原文写进系统日志（同 TurnManager 的 FI_STT_DEBUG）。
+    static let parseDebug = ProcessInfo.processInfo.environment["FI_PARSE_DEBUG"] == "1"
+
     static func parse(_ text: String) -> [BankEntry] {
         let lines = normalizedLines(text)
         var entries: [BankEntry] = []
@@ -32,7 +35,13 @@ enum ScriptParser {
             if !quiet, cleanAnswer(buffer.joined(separator: "\n")).isEmpty {
                 // Two headings in a row: usually the document title, but log it — a
                 // dropped heading with a real question would silently lose an entry.
-                NSLog("[parser] heading without answer dropped: %@", heading)
+                //
+                // 标题原文是用户内容（公司名、个人题目），与转录原文同一条策略：
+                // NSLog 默认 public，会进 /var/db/diagnostics 保留数天、随 sysdiagnose
+                // 外泄，而「删除本地数据」清不掉系统日志。默认只记长度——「有没有丢条目」
+                // 照样看得出来，要看是哪一条再开 FI_PARSE_DEBUG=1。
+                if Self.parseDebug { NSLog("[parser] heading without answer dropped: %@", heading) }
+                else { NSLog("[parser] heading without answer dropped (%d chars)", heading.count) }
             }
             append(question: heading, answer: buffer.joined(separator: "\n"))
             buffer.removeAll(keepingCapacity: true)

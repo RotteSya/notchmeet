@@ -113,7 +113,12 @@ final class TurnManager: @unchecked Sendable {
         }
         let q = t.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isMeaningfulQuestion(q) else {
-            NSLog("[turn] ignore backchannel: %@", q)
+            // 与 commitPending 同一条策略：转录原文只在显式开启 STT 调试时落日志。
+            // 这一支是 a0d33c3 那次修复漏掉的——而它恰恰最常触发（判据之一是长度 < 4，
+            // 任何 STT 碎片、误识、断句尾巴都会走到这里），等于把面试官说的话
+            // 一片片写进系统日志。
+            if sttDebug { NSLog("[turn] ignore backchannel: %@", q) }
+            else { NSLog("[turn] ignore backchannel (%d chars)", q.count) }
             return
         }
         // S2: see exactly what the interviewer's speech was recognized as (+confidence).
