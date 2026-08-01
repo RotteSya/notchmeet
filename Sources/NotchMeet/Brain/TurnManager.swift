@@ -268,6 +268,25 @@ final class TurnManager: @unchecked Sendable {
         model.message = .thinking
 
         currentQuestion = question
+
+        // Source 0：确定性事实即答。数字・条件系（希望年収 / 入社可能時期 / 語学スコア）
+        // 命中就地上屏并**不启动**另外两路——命中即定稿，不存在被覆盖的问题。
+        //
+        // 刻意不受 `Settings.sendContextToLLM` 约束：那道门管的是「要不要把事实发到云端」，
+        // 而这条路径全在本机、一个字节都不出网。关掉隐私开关的用户恰恰最需要这类即答，
+        // 拿它当门会把功能反向关掉。
+        if let facts = knowledge as? FactStore,
+           let quick = FactQuickAnswer.answer(for: question, facts: facts) {
+            // startTurn 本身非隔离，但本类的契约是「所有状态与 model 写入都串行在主队列上」
+            // （见类型注释）；commitAnswer 已按该契约标了 @MainActor。
+            MainActor.assumeIsolated {
+                committedEpoch = myEpoch
+                latency.markFirstReadable(epoch: myEpoch, kind: .fact)
+                commitAnswer(quick, myEpoch: myEpoch)   // 内含 finishTurn：history / 回看 / 计时收尾
+            }
+            return
+        }
+
         // 面接は連続した会話：hist は路由与 grounding 都要用（同一隐私门）。
         // 深掘り（「弊社ではどのように貢献できますか」接在ガクチカ回答之后）对孤立
         // 处理是致命的——路由会误命中字面相近的过去经历稿，grounding 也拉不进
