@@ -390,6 +390,33 @@ struct AppStrings {
         pick("录音期间，所选通话 App 的声音会实时转写：引擎为 Deepgram 时上传云端，为 Apple 本地（国内默认）时在本机离线完成、录音不上传。识别出的问题（默认连同你的简历要点与面试原稿）会发送给所选 AI（Gemini／Claude／DeepSeek／通义千问）生成回答。服务密钥与本地文件仅保存在本机，不使用麦克风、摄像头或屏幕。",
              "録音中、選択した通話アプリの音声はリアルタイムで文字起こしされます：エンジンが Deepgram の場合はクラウドに送信、Apple（オンデバイス）の場合は端末内で完結し音声は送信されません。認識された質問は（既定では履歴書メモと面接原稿とともに）選択した AI（Gemini／Claude／DeepSeek／通義千問）に送信され回答を生成します。サービスキーとローカルファイルは端末内にのみ保存され、マイク・カメラ・画面は使用しません。")
     }
+    // 预生成引擎的真实收件人披露。本机 CLI 不在上面那段列出的服务里——
+    // 只有在它真的会被使用时才追加这一句，避免给没装 CLI 的用户平添噪音。
+    /// 正文是纯文本 label（`SKBuild.textBlock` 不解析 Markdown），所以这里不能写 `**`。
+    func privacyDataFlowLocalCLI(cli: String, vendor: String) -> String {
+        pick("另外：本机检测到 \(cli) CLI，你在「识别与回答」点「预生成回答」时，简历要点会经由它进入你自己的 \(vendor) 账号——不经过上面列出的服务，也不消耗额度。可在那一页关闭。",
+             "また、本機に \(cli) CLI が見つかりました。「認識と回答」で「回答を事前生成」を押すと、履歴書メモはそれを通じてあなた自身の \(vendor) アカウントに送られます（上記のサービスは経由せず、残高も消費しません）。同じページでオフにできます。")
+    }
+
+    var prepEngineLabel: String { pick("预生成引擎", "事前生成エンジン") }
+    func prepEngineLocalCLI(cli: String, vendor: String) -> String {
+        pick("本机 \(cli) CLI · 经由你自己的 \(vendor) 账号 · 不消耗额度",
+             "本機の \(cli) CLI · あなた自身の \(vendor) アカウント経由 · 残高を消費しません")
+    }
+    func prepEngineManaged(name: String, seconds: Int) -> String {
+        let minutes = max(1, Int((Double(seconds) / 60).rounded()))
+        return pick("\(name) · 约消耗 \(minutes) 分钟额度",
+                    "\(name) · 約 \(minutes) 分の残高を消費します")
+    }
+    var prepEngineUnavailable: String {
+        pick("尚未配置服务，无法预生成", "サービス未設定のため事前生成できません")
+    }
+    var useLocalCliLabel: String { pick("用本机 CLI 预生成", "本機の CLI で事前生成") }
+    func useLocalCliHelp(cli: String, vendor: String) -> String {
+        pick("开启时用本机 \(cli) 生成，内容经由你自己的 \(vendor) 账号，不消耗额度；关闭则改用上方的「当前回答模型」（按额度计量）。",
+             "オンにすると本機の \(cli) で生成し（あなた自身の \(vendor) アカウント経由・残高を消費しません）、オフにすると上の「現在の回答モデル」を使います（残高を消費）。")
+    }
+
     var sendContextLabel: String { pick("把简历要点与原稿发送给 AI", "履歴書メモと原稿を AI に送信") }
     var sendContextHelp: String {
         pick("开启时，回答会贴合你的经历。关闭后回答更通用：不再把简历或原稿（含其问题）发送给 AI。",

@@ -62,6 +62,17 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "nm_send_context") }
     }
 
+    /// 是否允许「预生成回答」使用本机安装的 claude / codex CLI。
+    ///
+    /// 默认开：它走用户自己的账号、不消耗本应用额度，质量通常也更好。但它与
+    /// 「当前回答模型」显示的服务**不是同一个收件人**（数据进的是用户自己的
+    /// Anthropic / OpenAI 账号），所以设置页会在按钮按下之前写明真实引擎，
+    /// 关掉即改用已配置的云端服务（按额度计量）。
+    static var useLocalCliForPrep: Bool {
+        get { UserDefaults.standard.object(forKey: "nm_prep_local_cli") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "nm_prep_local_cli") }
+    }
+
     /// Bundle ID of the single app whose output audio is captured. `nil` = auto-detect the
     /// active call app (see `AudioTargetResolver`). Persisted so the choice survives relaunch.
     /// Data-minimization: we tap ONE app, never all system audio.

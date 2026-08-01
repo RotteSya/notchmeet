@@ -268,6 +268,8 @@ final class KeyRowView: FlippedView {
 
 final class AnswerSection: SectionScroll {
     private let spinner = NSProgressIndicator()
+    private weak var engineLine: NSTextField?
+    private weak var buildButton: SKButton?
 
     init(onBuildBank: @escaping () -> Void, onEngineChanged: @escaping () -> Void) {
         super.init(frame: .zero)
@@ -300,8 +302,15 @@ final class AnswerSection: SectionScroll {
         }
         let buildCluster = SKBuild.cluster([spinner, buildBtn], spacing: 10)
 
+        // 预生成的真实收件人必须在按下之前就写出来。本机 CLI 走的是用户自己的
+        // Anthropic / OpenAI 账号，与上面「当前回答模型」显示的服务完全是两回事，
+        // 而此前它被静默优先使用、任何披露文案里都没有出现过。
+        self.buildButton = buildBtn
+        let engineLine = SKBuild.help("", color: SK.secondary, size: 11.5)
+        self.engineLine = engineLine
+
         let title = SKBuild.pageTitle(s.secAnswer)
-        scroll.setRows([
+        var rows: [NSView] = [
             title,
             SKBuild.divider(),
             SKBuild.controlRow(s.currentLLMLabel, control: modelCluster),
@@ -309,9 +318,45 @@ final class AnswerSection: SectionScroll {
             engineRow,
             SKBuild.divider(),
             SKBuild.controlRow(s.buildAnswerBank, control: buildCluster),
-            SKBuild.divider(),
-        ])
+            SKBuild.padded(engineLine, top: 0, bottom: 16),
+        ]
+        // 只有真的检测到本机 CLI 时才给开关——没装的人看到它只会困惑。
+        if let cli = PreGenerator.installedCLI() {
+            let cliToggle = SKToggle(isOn: Settings.useLocalCliForPrep) { [weak self] on in
+                Settings.useLocalCliForPrep = on
+                // 开关一动，上面那行「预生成引擎」立刻改口——否则关掉之后按钮旁边
+                // 还写着「本机 claude CLI」，就成了新的假披露。
+                self?.refreshEngineLine()
+            }
+            rows += [
+                SKBuild.divider(),
+                SKBuild.controlRow(s.useLocalCliLabel, control: cliToggle,
+                                   help: s.useLocalCliHelp(cli: cli.name, vendor: cli.vendor)),
+            ]
+        }
+        rows.append(SKBuild.divider())
+        scroll.setRows(rows)
         scroll.gap(18, after: title)
+        refreshEngineLine()
+    }
+
+    /// 「预生成引擎」那一行 + 按钮可用性，随开关实时同步。
+    private func refreshEngineLine() {
+        let s = self.s
+        let engine = PreGenerator.resolveEngine()
+        let text: String = switch engine {
+        case .localCLI(let name, _):
+            s.prepEngineLocalCLI(cli: name, vendor: engine.vendor ?? name)
+        case .managed(let name):
+            s.prepEngineManaged(name: name,
+                                seconds: PreGenerator.chargeSecondsPerIntent * Intents.list.count)
+        case .unavailable:
+            s.prepEngineUnavailable
+        }
+        engineLine?.attributedStringValue = SKText.attributed(
+            "\(s.prepEngineLabel)：\(text)",
+            font: SK.font(11.5), color: engine == .unavailable ? SK.warning : SK.secondary)
+        buildButton?.isEnabledFlag = engine != .unavailable
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -337,11 +382,19 @@ final class PrivacySection: SectionScroll {
         }
         constrain(popup, width: 300, height: 32)
 
+        // 本机 CLI 是一条上面那段没有列出的收件人（数据进用户自己的 Anthropic /
+        // OpenAI 账号）。只有在它真的会被用到时才追加这一句——没装 CLI 的用户
+        // 看到它只是噪音，而噪音会让真正重要的披露被略过。
+        var dataFlow = s.privacyDataFlowBody
+        if Settings.useLocalCliForPrep, let cli = PreGenerator.installedCLI() {
+            dataFlow += "\n\n" + s.privacyDataFlowLocalCLI(cli: cli.name, vendor: cli.vendor)
+        }
+
         let title = SKBuild.pageTitle(s.secPrivacy)
         scroll.setRows([
             title,
             SKBuild.divider(),
-            SKBuild.textBlock(s.privacyDataFlowTitle, s.privacyDataFlowBody, vPad: 24),
+            SKBuild.textBlock(s.privacyDataFlowTitle, dataFlow, vPad: 24),
             SKBuild.divider(),
             SKBuild.controlRow(s.sendContextLabel, control: toggle, help: s.sendContextHelp, vPad: 18),
             SKBuild.divider(),

@@ -16,6 +16,60 @@ final class PreGenerator {
     /// 每个 intent 一次受管 LLM 调用，按 10 秒额度计（本地 CLI 路径不计量）。
     static let chargeSecondsPerIntent = 10
 
+    /// 预生成实际会用哪个引擎。
+    ///
+    /// 本机 CLI 与「当前回答模型」显示的那个服务**不是同一个收件人**：它把简历要点
+    /// 送进用户自己的 Anthropic / OpenAI 账号。此前这条路径被静默优先使用，而所有
+    /// 披露文案（同意书、隐私页、README）列出的收件人里从来没有它——用户配置了
+    /// DeepSeek、界面也显示 DeepSeek，数据却走了别处。
+    ///
+    /// 所以解析结果必须能被 UI 拿到：按钮旁在**按下之前**就写出真实引擎与代价，
+    /// 这与 `consentBody(sttLocal:)` 点名真实 STT 收件人是同一条原则。
+    enum PrepEngine: Equatable {
+        /// 本机安装的 agent CLI（走用户自己的账号，不消耗本应用额度）。
+        case localCLI(name: String, path: String)
+        /// 受管 / 自备 Key 的云端服务，与「当前回答模型」一致（按额度计量）。
+        case managed(String)
+        /// 两条路都没有——按钮该置灰，而不是先扣额度再失败 19 次。
+        case unavailable
+
+        /// 供应商真名，用于披露文案：用户账号在谁那里。
+        var vendor: String? {
+            switch self {
+            case .localCLI("claude", _): "Anthropic"
+            case .localCLI("codex", _):  "OpenAI"
+            case .localCLI:              nil
+            case .managed, .unavailable: nil
+            }
+        }
+    }
+
+    /// 本机装了哪个 agent CLI——**不看** `useLocalCliForPrep` 开关。
+    /// 用于「要不要显示那个开关」和「隐私页要不要提这条收件人」：装了但关掉了，
+    /// 开关仍要在，否则用户没有再打开它的入口。
+    static func installedCLI() -> (name: String, vendor: String)? {
+        let detected = CliRunner.detect()
+        for name in ["claude", "codex"] where detected[name]?.installed == true {
+            let engine = PrepEngine.localCLI(name: name, path: "")
+            return (name, engine.vendor ?? name)
+        }
+        return nil
+    }
+
+    static func resolveEngine() -> PrepEngine {
+        if Settings.useLocalCliForPrep {
+            let detected = CliRunner.detect()
+            if let c = detected["claude"], c.installed, let p = c.path {
+                return .localCLI(name: "claude", path: p)
+            }
+            if let c = detected["codex"], c.installed, let p = c.path {
+                return .localCLI(name: "codex", path: p)
+            }
+        }
+        if let name = ProviderRegistry.llmDisplayName() { return .managed(name) }
+        return .unavailable
+    }
+
     /// 送进预生成 prompt 的简历事实——与实时生成（TurnManager）、原稿整形（ScriptImporter）
     /// 同一道隐私门。用户在「隐私与数据」关掉「把简历要点与原稿发送给 AI」之后，这条路径
     /// 也不能把简历送出去；关掉时照常预生成，只是回答更通用。
@@ -30,24 +84,32 @@ final class PreGenerator {
     func generate(progress: ((Int, Int) -> Void)? = nil) async {
         let intents = Intents.list
         let context = Self.groundingContext(facts)
-        let cli = bestCLI()
+        let engine = Self.resolveEngine()
         var out: [BankEntry] = []
 
-        // 走受管 LLM（无本地 CLI）时按次计量：这条路径此前完全绕过额度系统。
-        if cli == nil,
+        // 两条路都不可用时直接退出：旧实现会先扣满额度，再眼睁睁看 19 个 intent
+        // 全部失败——为一次注定失败的预生成付钱。
+        guard engine != .unavailable else {
+            NSLog("[prep] no engine available (no local CLI, no LLM key) — skipping")
+            return
+        }
+        // 受管路径按次计量；本机 CLI 走用户自己的账号，不计量。
+        if case .managed = engine,
            !CreditManager.shared.chargeOneShot(
                seconds: Self.chargeSecondsPerIntent * intents.count) {
             NSLog("[prep] insufficient credit — skipping answer bank build")
             return
         }
+        NSLog("[prep] engine = %@", String(describing: engine))
 
         for (i, intent) in intents.enumerated() {
             let prompt = buildPrompt(intent: intent, context: context)
             let answer: String
             do {
-                if let cli {
-                    answer = try await CliRunner.run(cli: cli.0, binPath: cli.1, prompt: prompt)
-                } else {
+                switch engine {
+                case .localCLI(let name, let path):
+                    answer = try await CliRunner.run(cli: name, binPath: path, prompt: prompt)
+                case .managed, .unavailable:
                     answer = try await FastLLM.complete(
                         system: Prompts.system(context: context),
                         user: "質問: \(intent)\n\nそのまま声に出して答えられる完成した回答文だけを出力してください。",
@@ -72,13 +134,6 @@ final class PreGenerator {
         }
         await bank.replaceAll(out)   // 主线程写：与 TurnManager 的读同域
         NSLog("[prep] answer bank built: %d/%d intents", out.count, intents.count)
-    }
-
-    private func bestCLI() -> (String, String)? {
-        let det = CliRunner.detect()
-        if let c = det["claude"], c.installed, let p = c.path { return ("claude", p) }
-        if let c = det["codex"], c.installed, let p = c.path { return ("codex", p) }
-        return nil
     }
 
     private func buildPrompt(intent: String, context: String) -> String {
