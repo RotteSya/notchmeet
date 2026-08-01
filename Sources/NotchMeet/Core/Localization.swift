@@ -130,6 +130,45 @@ struct AppStrings {
         pick("回看 \(position)/\(count) · 这是之前的回答",
              "見返し \(position)/\(count) · 前の回答です")
     }
+    // MARK: - 简历事实（设置 → 简历事实）
+
+    var secFacts: String { pick("简历事实", "経歴・事実") }
+    var factsIntro: String {
+        pick("""
+             写下你的经历与几个硬数字。未命中原稿、需要现场生成回答时，AI 只能使用这里的事实——\
+             它被明令禁止编造数字与专有名词，所以这里空着，「希望年収は？」「入社可能時期は？」\
+             这类问题就只能答得含糊。按下面的格式书写，离线解析、不需要 API Key。
+             """,
+             """
+             経歴と、いくつかの具体的な数字を書いておきます。原稿に当たらずその場で回答を作るとき、\
+             AI が使えるのはここにある事実だけです（数字や固有名詞の創作は禁止しているため、\
+             ここが空だと「希望年収は？」などに曖昧にしか答えられません）。下記の書式で、\
+             オフライン解析・API キー不要です。
+             """)
+    }
+    var insertSample: String { pick("示例", "サンプル") }
+    var factsNothingRecognized: String {
+        pick("尚未识别到任何内容 · 点「示例」看格式", "まだ何も認識されていません · 「サンプル」で書式を確認")
+    }
+    func factsRecognition(experiences: Int, motivations: Int, notes: Int, hasProfile: Bool) -> String {
+        var parts: [String] = []
+        if hasProfile { parts.append(pick("简介", "プロフィール")) }
+        if experiences > 0 { parts.append(pick("经历 \(experiences) 条", "経験 \(experiences) 件")) }
+        if motivations > 0 { parts.append(pick("志望 \(motivations) 条", "志望 \(motivations) 件")) }
+        if notes > 0 { parts.append(pick("备忘 \(notes) 条", "メモ \(notes) 件")) }
+        return pick("已识别：", "認識：") + parts.joined(separator: " · ")
+    }
+    var factsSaved: String { pick("已保存，下一个问题即生效", "保存しました。次の質問から有効です") }
+    var factsSaveFailed: String { pick("保存失败——磁盘不可写，内容尚未存下", "保存できませんでした（ディスクに書けません）") }
+    var factsPrivacyOn: String {
+        pick("这些事实会随问题一起发送给所选 AI 用于生成回答。可在「隐私与数据」关闭。",
+             "これらの事実は質問とともに AI に送信され、回答生成に使われます（「プライバシー」でオフにできます）。")
+    }
+    var factsPrivacyOff: String {
+        pick("你已在「隐私与数据」关闭发送简历与原稿——这些事实只留在本机，不会发送给 AI，回答会更通用。",
+             "「プライバシー」で送信をオフにしています。これらの事実は本機に留まり、AI には送られません（回答は一般的になります）。")
+    }
+
     var reviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }
     var reviewReturnLive: String { pick("回到当前", "現在に戻る") }
     var hotkeyReviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }

@@ -9,14 +9,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var root: SettingsRoot?
     private let previousPolicy: NSApplication.ActivationPolicy
     private let store: ScriptStore
+    private let factStore: FactStore
 
     var onKeysChanged: (() -> Void)?
     var onBuildBank: (() -> Void)?
     var onDeleteData: (() -> Void)?
     var onRerunOnboarding: (() -> Void)?
 
-    init(store: ScriptStore) {
+    init(store: ScriptStore, factStore: FactStore) {
         self.store = store
+        self.factStore = factStore
         self.previousPolicy = NSApp.activationPolicy()
         super.init()
     }
@@ -31,6 +33,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         let root = SettingsRoot(
             store: store,
+            factStore: factStore,
             initial: section ?? .general,
             onKeysChanged: { [weak self] in self?.onKeysChanged?() },
             onBuildBank: { [weak self] in self?.onBuildBank?() },

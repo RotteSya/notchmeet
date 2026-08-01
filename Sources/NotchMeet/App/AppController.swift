@@ -433,7 +433,7 @@ final class AppController {
     /// pipeline restart. Key changes reload the pipeline (may flip mock⇄live).
     private func openSettings(section: SettingsSection? = nil) {
         if settingsWindow == nil {
-            let s = SettingsWindowController(store: scriptStore)
+            let s = SettingsWindowController(store: scriptStore, factStore: facts)
             s.onKeysChanged = { [weak self] in self?.reloadPipeline() }
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in

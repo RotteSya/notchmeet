@@ -9,7 +9,7 @@ import Combine
 // MARK: - Sections
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, wallet, scripts, answer, keys, privacy, about
+    case general, wallet, scripts, facts, answer, keys, privacy, about
     var id: String { rawValue }
 
     var icon: String {
@@ -17,6 +17,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "slider.horizontal.3"
         case .wallet:  "hourglass"
         case .scripts: "doc.text"
+        case .facts:   "person.text.rectangle"
         case .keys:    "key.fill"
         case .answer:  "sparkles"
         case .privacy: "lock.shield"
@@ -29,6 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: s.secGeneral
         case .wallet:  s.secWallet
         case .scripts: s.secScripts
+        case .facts:   s.secFacts
         case .keys:    s.secKeys
         case .answer:  s.secAnswer
         case .privacy: s.secPrivacy
@@ -41,6 +43,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 final class SettingsRoot: NSView {
     private let store: ScriptStore
+    private let factStore: FactStore
     private let onKeysChanged: () -> Void
     private let onBuildBank: () -> Void
     private let onDeleteData: () -> Void
@@ -70,12 +73,13 @@ final class SettingsRoot: NSView {
 
     private var strings: AppStrings { AppStrings(language: AppLanguageStore.shared.language) }
 
-    init(store: ScriptStore, initial: SettingsSection,
+    init(store: ScriptStore, factStore: FactStore, initial: SettingsSection,
          onKeysChanged: @escaping () -> Void,
          onBuildBank: @escaping () -> Void,
          onDeleteData: @escaping () -> Void,
          onRerunOnboarding: @escaping () -> Void) {
         self.store = store
+        self.factStore = factStore
         self.current = initial
         self.onKeysChanged = onKeysChanged
         self.onBuildBank = onBuildBank
@@ -190,6 +194,8 @@ final class SettingsRoot: NSView {
         case .general: return GeneralSection()
         case .wallet:  return WalletSection(onKeysChanged: onKeysChanged)
         case .scripts: return ScriptsSection(store: store)
+        // 保存后重建管线：新填的事实必须当场对下一问生效，而不是等下次启动。
+        case .facts:   return FactsSection(store: factStore, onSaved: onKeysChanged)
         case .keys:    return KeysSection(onKeysChanged: onKeysChanged)
         case .answer:  return AnswerSection(onBuildBank: onBuildBank, onEngineChanged: onKeysChanged)
         case .privacy: return PrivacySection(onDeleteData: onDeleteData)

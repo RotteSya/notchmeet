@@ -16,10 +16,20 @@ final class PreGenerator {
     /// 每个 intent 一次受管 LLM 调用，按 10 秒额度计（本地 CLI 路径不计量）。
     static let chargeSecondsPerIntent = 10
 
+    /// 送进预生成 prompt 的简历事实——与实时生成（TurnManager）、原稿整形（ScriptImporter）
+    /// 同一道隐私门。用户在「隐私与数据」关掉「把简历要点与原稿发送给 AI」之后，这条路径
+    /// 也不能把简历送出去；关掉时照常预生成，只是回答更通用。
+    ///
+    /// 此前这里无条件读 facts。当时没有 facts 写入口、事实恒为空，所以漏不出东西；
+    /// 简历事实编辑器上线后，它就变成一条真实的泄漏路径了。
+    static func groundingContext(_ facts: FactStore) -> String {
+        Settings.sendContextToLLM ? facts.context(for: "") : ""
+    }
+
     /// Generate the bank. `progress` is called on completion of each intent.
     func generate(progress: ((Int, Int) -> Void)? = nil) async {
         let intents = Intents.list
-        let context = facts.context(for: "")
+        let context = Self.groundingContext(facts)
         let cli = bestCLI()
         var out: [BankEntry] = []
 
