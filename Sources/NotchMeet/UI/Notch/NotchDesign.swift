@@ -71,6 +71,14 @@ enum NotchMotion {
 enum NotchMetrics {
     static let shadowMarginH: CGFloat = 22       // each side
     static let shadowMarginBottom: CGFloat = 28
+
+    /// 答案区的可视高度上限（约 22 行、15pt 日文）。
+    ///
+    /// 超过就在 `StreamingAnswerView` 内部滚动，而不是让卡片一路长到屏幕底再被窗口
+    /// 静默切掉——旧行为下用户读到底部断在半句上，且没有任何「后面还有」的痕迹。
+    /// 量高（NotchController.expandedHeight）与布局（NotchView.layoutExpanded）**必须**
+    /// 用同一个上限，否则又回到「量出来的高度不等于画出来的高度」那类错位。
+    static let maxAnswerHeight: CGFloat = 420
 }
 
 // MARK: - Small helpers

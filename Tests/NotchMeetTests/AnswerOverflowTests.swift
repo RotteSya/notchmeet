@@ -1,0 +1,97 @@
+import AppKit
+import XCTest
+@testable import notchmeet
+
+/// 长答案的溢出处理（审计 #28）。
+///
+/// 旧行为：卡片高度＝文本高度，一路长到屏幕底，再被 `NotchController` 的
+/// `min(desired, screen.height - margin)` 夹住——超出的部分被**窗口**静默切掉，
+/// 没有省略号、没有渐隐、没有任何「后面还有」的痕迹。用户读到底部断在半句上，
+/// 而且不知道自己漏了内容。
+///
+/// 现在答案区有固定上限，超出部分在视图内部滚动。
+@MainActor
+final class AnswerOverflowTests: XCTestCase {
+
+    private func view(width: CGFloat = 480, height: CGFloat) -> StreamingAnswerView {
+        let v = StreamingAnswerView()
+        v.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        return v
+    }
+
+    private let longAnswer = String(repeating: "はい。私の強みは、状況を整理してすぐに行動へ移せる点です。", count: 12)
+
+    func testShortAnswerIsNotScrollable() {
+        let v = view(height: 200)
+        v.setText("はい。私の強みは実行力です。")
+        XCTAssertFalse(v.isScrollable)
+        XCTAssertEqual(v.maxScroll, 0)
+    }
+
+    func testLongAnswerBecomesScrollable() {
+        let v = view(height: 120)
+        v.setText(longAnswer)
+        XCTAssertTrue(v.isScrollable, "长答案必须可滚动，否则又回到静默截断")
+        XCTAssertGreaterThan(v.maxScroll, 0)
+    }
+
+    /// 位移必须夹在 [0, maxScroll]：滚过头会露出空白，用户以为答案没了。
+    func testScrollClampsAtBothEnds() {
+        let v = view(height: 120)
+        v.setText(longAnswer)
+
+        v.scroll(by: -10_000)                       // 往下滚到底
+        XCTAssertEqual(v.scrollOffset, v.maxScroll, accuracy: 0.5)
+
+        v.scroll(by: 10_000)                        // 往上滚到顶
+        XCTAssertEqual(v.scrollOffset, 0, accuracy: 0.5)
+    }
+
+    /// 流式追加（同一轮的 delta）不能把用户正在读的位置拽走。
+    func testStreamingAppendKeepsTheReadingPosition() {
+        let v = view(height: 120)
+        v.setText(longAnswer)
+        v.scroll(by: -40)
+        let before = v.scrollOffset
+        XCTAssertGreaterThan(before, 0)
+
+        v.setText(longAnswer + "この経験を御社でも生かしたいと考えています。")
+
+        XCTAssertEqual(v.scrollOffset, before, accuracy: 0.5,
+                       "纯追加时位移必须保持——否则读到一半被拽回顶部")
+    }
+
+    /// 整段换新（下一轮答案、回看切换）必须回到顶部：人是从第一行开始念的，
+    /// 停在旧位移上会让用户盯着一段空白，以为答案没出来。
+    func testNewAnswerResetsToTop() {
+        let v = view(height: 120)
+        v.setText(longAnswer)
+        v.scroll(by: -60)
+        XCTAssertGreaterThan(v.scrollOffset, 0)
+
+        v.setText("まったく別の回答です。前の回答とは共通の先頭を持ちません。")
+
+        XCTAssertEqual(v.scrollOffset, 0, accuracy: 0.001)
+    }
+
+    /// 不可滚动时滚轮不该产生位移（否则会把文本推出视野）。
+    func testScrollIsInertWhenEverythingFits() {
+        let v = view(height: 300)
+        v.setText("短い回答です。")
+        v.scroll(by: -500)
+        XCTAssertEqual(v.scrollOffset, 0)
+    }
+
+    /// 量高与渲染必须用**同一个**上限常量。两处各写各的，就会重现
+    /// 「面板按 A 高度开、文字按 B 高度排」那类错位——这正是本项要修的病根。
+    func testHeightCapIsSharedBetweenMeasurementAndLayout() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        for path in ["Sources/NotchMeet/UI/Notch/NotchController.swift",
+                     "Sources/NotchMeet/UI/Notch/NotchView.swift"] {
+            let text = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+            XCTAssertTrue(text.contains("NotchMetrics.maxAnswerHeight"),
+                          "\(path) 没有使用共享上限常量")
+        }
+    }
+}

@@ -22,6 +22,29 @@ final class StreamingAnswerView: NSView {
         didSet { if dimmed != oldValue { alphaValue = dimmed ? 0.45 : 1 } }
     }
 
+    /// 答案超过可视高度时的滚动位移（0 = 顶部）。
+    ///
+    /// 刻意**不**自动跟随底部：这是提词器，人是从第一行开始念的，自动滚到底等于
+    /// 把还没念的内容推出视野。新答案到达时归零，之后完全由用户滚轮控制。
+    private(set) var scrollOffset: CGFloat = 0
+
+    /// 内容总高（按当前宽度排版）。宽度为 0 时不排版。
+    private var contentHeight: CGFloat {
+        guard bounds.width > 1, !text.isEmpty else { return 0 }
+        return Self.measure(text, width: bounds.width)
+    }
+
+    /// 还能往下滚多少；0 = 内容全部可见（此时不画渐隐提示、也不吃滚轮）。
+    var maxScroll: CGFloat { max(0, contentHeight - bounds.height) }
+    var isScrollable: Bool { maxScroll > 0.5 }
+
+    func scroll(by delta: CGFloat) {
+        let next = min(max(0, scrollOffset - delta), maxScroll)
+        guard abs(next - scrollOffset) > 0.01 else { return }
+        scrollOffset = next
+        needsDisplay = true
+    }
+
     private static let birthDuration: CFTimeInterval = 0.18
     private static let stagger: CFTimeInterval = 0.012
     private static let staggerCap: CFTimeInterval = 0.22   // 长段整体到达时不无限排队
@@ -55,6 +78,9 @@ final class StreamingAnswerView: NSView {
                 next.append(now + delay)
             }
         }
+        // 纯追加（流式 delta）保持当前位移；整段换新（新一轮答案、回看切换）则回到顶部——
+        // 否则用户会盯着一段空白，以为答案没出来。
+        if common < oldChars.count { scrollOffset = 0 }
         text = new
         births = next
         frameCache = nil
@@ -143,7 +169,7 @@ final class StreamingAnswerView: NSView {
         ctx.saveGState()
         ctx.translateBy(x: 0, y: bounds.height)
         ctx.scaleBy(x: 1, y: -1)
-        let shift = Self.layoutHeight - bounds.height
+        let shift = Self.layoutHeight - bounds.height + scrollOffset
 
         let lines = CTFrameGetLines(frame) as! [CTLine]
         var origins = [CGPoint](repeating: .zero, count: lines.count)
@@ -179,6 +205,42 @@ final class StreamingAnswerView: NSView {
             }
         }
         ctx.restoreGState()
+        drawOverflowHint(ctx)
+    }
+
+    /// 「下面还有」的可见凭据。旧行为是超出屏幕后被窗口静默切掉——用户读到底部
+    /// 断在半句上，且完全不知道后面还有内容。上下各一道渐隐，有内容的方向才画。
+    private func drawOverflowHint(_ ctx: CGContext) {
+        guard isScrollable else { return }
+        let fade: CGFloat = 22
+        let bg = NotchPalette.background
+        func band(_ rect: CGRect, topDown: Bool) {
+            ctx.saveGState()
+            ctx.clip(to: rect)
+            ctx.drawLinearGradient(
+                skGradient([(bg.withAlphaComponent(topDown ? 0.95 : 0), 0),
+                            (bg.withAlphaComponent(topDown ? 0 : 0.95), 1)]),
+                start: CGPoint(x: rect.midX, y: rect.minY),
+                end: CGPoint(x: rect.midX, y: rect.maxY), options: [])
+            ctx.restoreGState()
+        }
+        if scrollOffset > 0.5 {
+            band(CGRect(x: 0, y: 0, width: bounds.width, height: fade), topDown: true)
+        }
+        if scrollOffset < maxScroll - 0.5 {
+            band(CGRect(x: 0, y: bounds.height - fade, width: bounds.width, height: fade),
+                 topDown: false)
+        }
+    }
+
+    /// 滚轮。面板是 `.nonactivatingPanel` 且 `canBecomeKey = false`，拿不到键盘事件，
+    /// 所以滚轮是长答案唯一的翻阅手段（不再多占全局热键，见 AppController 的注释）。
+    override func scrollWheel(with event: NSEvent) {
+        guard isScrollable else { super.scrollWheel(with: event); return }
+        // 触控板给的是精确增量，鼠标滚轮给的是「行」——后者乘一个行高量级才跟手。
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY
+                                                    : event.scrollingDeltaY * 16
+        scroll(by: delta)
     }
 
     private func easeOut(_ t: CFTimeInterval) -> CGFloat { CGFloat(1 - pow(1 - t, 2.4)) }
