@@ -239,6 +239,7 @@ final class StreamingAnswerView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard !text.isEmpty else { return nil }
         let menu = NSMenu()
+        ScreenShareGuard.protect(menu)   // 面试中右键 ＝ 菜单不能进共享帧
         let item = NSMenuItem(title: AppStrings.current.copyAnswer,
                               action: #selector(copyAnswer), keyEquivalent: "")
         item.target = self

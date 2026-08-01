@@ -379,7 +379,7 @@ final class PrivacySection: SectionScroll {
         alert.addButton(withTitle: s.deleteButton)
         alert.addButton(withTitle: s.cancel)
         guard let window else { return }
-        alert.beginSheetModal(for: window) { [weak self] resp in
+        alert.beginSheetModalGuarded(for: window) { [weak self] resp in
             if resp == .alertFirstButtonReturn { self?.onDeleteData() }
         }
     }

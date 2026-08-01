@@ -110,6 +110,8 @@ final class ControlPanel: NSObject {
 
     private func buildScriptMenu(_ t: AppStrings) -> NSMenu {
         let sub = NSMenu()
+        // 子菜单是悬停时才创建的**另一个**窗口，父菜单的排除不覆盖它——而这一屏正是公司名。
+        ScreenShareGuard.protect(sub)
         let data = scriptsProvider?() ?? (scripts: [], activeID: nil)
         for s in data.scripts {
             let on = s.id == data.activeID
@@ -158,6 +160,11 @@ final class ControlPanel: NSObject {
 extension ControlPanel: NSMenuDelegate {
     /// Repopulate just before the menu shows, so the self-check + picker reflect current state.
     func menuNeedsUpdate(_ menu: NSMenu) { rebuild() }
-    func menuWillOpen(_ menu: NSMenu) { onMenuVisibilityChanged?(true) }
+    func menuWillOpen(_ menu: NSMenu) {
+        // 菜单窗口此刻已创建、尚未上屏 —— 这是把它挡在屏幕共享之外的唯一零帧时机。
+        // 这个菜单里有自检状态和原稿名（公司名），面试官看到就是灾难。
+        ScreenShareGuard.excludeMenuWindowsNow()
+        onMenuVisibilityChanged?(true)
+    }
     func menuDidClose(_ menu: NSMenu) { onMenuVisibilityChanged?(false) }
 }

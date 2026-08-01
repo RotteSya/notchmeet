@@ -175,7 +175,7 @@ final class ScriptsSection: FlippedView {
         alert.messageText = s.scriptSaveFailedTitle
         alert.informativeText = s.scriptSaveFailedBody
         alert.addButton(withTitle: s.ok)
-        if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
+        if let w = window { alert.beginSheetModalGuarded(for: w) } else { alert.runModalGuarded() }
     }
 
     // MARK: Transitions
@@ -245,7 +245,7 @@ final class ScriptsSection: FlippedView {
         alert.addButton(withTitle: s.deleteButton)
         alert.addButton(withTitle: s.cancel)
         guard let window else { return }
-        alert.beginSheetModal(for: window) { [weak self] resp in
+        alert.beginSheetModalGuarded(for: window) { [weak self] resp in
             if resp == .alertFirstButtonReturn { self?.store.remove(id: script.id) }
         }
     }
@@ -268,7 +268,7 @@ final class ScriptsSection: FlippedView {
             alert.messageText = s.importFailedTitle
             alert.informativeText = error.localizedDescription
             alert.addButton(withTitle: s.ok)
-            if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
+            if let w = window { alert.beginSheetModalGuarded(for: w) } else { alert.runModalGuarded() }
         }
     }
 

@@ -43,6 +43,9 @@ final class AppController {
         ManagedKeyRegistry.migrateLegacyFlagsIfNeeded()
         credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
         observeCredit()
+        // 菜单窗口是 AppKit 私有窗口，只能在它出现的那一刻补设 sharingType——在任何 UI
+        // 之前装好这道闸门（PLAN §3 S4）。
+        ScreenShareGuard.installMenuGuard()
         notch.show()
         installEditMenu()
         installControls()
@@ -76,6 +79,7 @@ final class AppController {
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: t.editMenu)
+        ScreenShareGuard.protect(edit)   // 设置/引导打开时应用是 .regular，菜单栏可点开
         editItem.submenu = edit
         edit.addItem(withTitle: t.cut, action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: t.copy, action: #selector(NSText.copy(_:)), keyEquivalent: "c")
@@ -229,7 +233,7 @@ final class AppController {
         alert.addButton(withTitle: t.consentAgree)    // .alertFirstButtonReturn (default)
         alert.addButton(withTitle: t.consentCancel)
         NSApp.activate(ignoringOtherApps: true)
-        let agreed = alert.runModal() == .alertFirstButtonReturn
+        let agreed = alert.runModalGuarded() == .alertFirstButtonReturn
         if agreed { Settings.recordingConsentVersion = Settings.currentConsentVersion }
         return agreed
     }
@@ -244,7 +248,7 @@ final class AppController {
         alert.addButton(withTitle: t.openPrivacySettings)
         alert.addButton(withTitle: t.cancel)
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn { openSettings(section: .privacy) }
+        if alert.runModalGuarded() == .alertFirstButtonReturn { openSettings(section: .privacy) }
     }
 
     /// Name of the LLM the live pipeline will actually use (mirrors `ProviderRegistry`),
@@ -337,7 +341,7 @@ final class AppController {
         alert.addButton(withTitle: t.creditEnterCodeAction)  // 设置 → 额度与充值
         alert.addButton(withTitle: t.cancel)
         NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
+        switch alert.runModalGuarded() {
         case .alertFirstButtonReturn: NSWorkspace.shared.open(Provisioning.buyURL)
         case .alertSecondButtonReturn: openSettings(section: .wallet)
         default: break
@@ -427,7 +431,7 @@ final class AppController {
                 alert.informativeText = AppStrings.current.deleteIncompleteBody(
                     failures.joined(separator: ", "))
                 alert.addButton(withTitle: AppStrings.current.ok)
-                alert.runModal()
+                alert.runModalGuarded()
             }
             s.onRerunOnboarding = { [weak self] in self?.openOnboarding() }
             settingsWindow = s

@@ -454,6 +454,7 @@ final class SKPopup: NSControl {
 
     override func mouseDown(with event: NSEvent) {
         let menu = NSMenu()
+        ScreenShareGuard.protect(menu)
         menu.appearance = NSAppearance(named: .darkAqua)
         menu.font = SK.font(13)
         for item in items {

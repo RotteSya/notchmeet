@@ -67,6 +67,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         w.isMovableByWindowBackground = true
         w.backgroundColor = NSColor(red: 0.024, green: 0.027, blue: 0.043, alpha: 1) // #06070b
         w.appearance = NSAppearance(named: .darkAqua)
+        // 排除出屏幕采集（PLAN §3 S4）。引导不只在首启出现——「设置 → 关于 → 重新运行引导」
+        // 可以在面试中途重开，而它的导入步骤里就是原稿全文。DEBUG + `--visual-qa` 下降级为
+        // .readOnly，本地截图 QA 仍可用。
+        ScreenShareGuard.exclude(w)
         let hosting = NSHostingView(rootView: view)
         hosting.sizingOptions = []          // SwiftUI content must NOT drive the window size
         hosting.layer?.backgroundColor = .clear

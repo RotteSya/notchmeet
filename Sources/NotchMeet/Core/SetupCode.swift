@@ -52,6 +52,6 @@ enum SetupCode {
         alert.addButton(withTitle: t.setupCodeConfirmApply)
         alert.addButton(withTitle: t.cancel)
         NSApp.activate(ignoringOtherApps: true)
-        return alert.runModal() == .alertFirstButtonReturn
+        return alert.runModalGuarded() == .alertFirstButtonReturn
     }
 }
