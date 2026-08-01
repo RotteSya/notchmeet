@@ -137,6 +137,13 @@ final class AppController {
         inactivity.onTimeout = { [weak self] in self?.autoStopForInactivity() }
     }
 
+    /// 进程退出前的收尾。菜单里的「退出」走 NSApp.terminate，不经过 stopRecording——
+    /// 而 sessions.end() 只在那里调用，于是录音中直接退出会把整场复盘丢掉（record()
+    /// 只改了内存里的当前会话）。stopRecording 幂等，未在录音时这里什么也不做。
+    func prepareForTermination() {
+        if recording { stopRecording() } else { sessions.end() }
+    }
+
     /// (Re)start the pipeline per AppConfig + current keys. Called at launch and
     /// whenever keys change from the menu.
     private func reloadPipeline() {
@@ -446,6 +453,10 @@ final class AppController {
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in
                 let failures = LocalData.deleteAll()
+                // 内存里的复盘记录必须一并清掉。只删文件的话：复盘页照样列出已删的
+                // 转录，而下一次会话结束时 save() 会把内存中留存的整份历史又写回磁盘
+                // ——「已删除」当场变成假话。
+                self?.sessions.clear()
                 self?.facts.reload(); self?.bank.reload(); self?.scriptStore.reload(); self?.reloadPipeline()
                 // 「已删除」是一句隐私承诺，不能建立在被吞掉的错误上。
                 guard !failures.isEmpty else { return }
@@ -576,6 +587,7 @@ final class AppController {
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
         }
+        tm.onTurnRetracted = { [weak self] q in self?.sessions.retractLast(question: q) }
         tm.paused = true
         stt.onTranscript = { [weak tm] t in
             DispatchQueue.main.async { tm?.handleTranscript(t) }
@@ -620,6 +632,7 @@ final class AppController {
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
         }
+        tm.onTurnRetracted = { [weak self] q in self?.sessions.retractLast(question: q) }
         tm.paused = true   // ignore transcripts until the session actually starts
 
         sttc.onTranscript = { [weak tm, weak self] t in

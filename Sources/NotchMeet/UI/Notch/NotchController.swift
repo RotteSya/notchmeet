@@ -132,7 +132,9 @@ final class NotchController {
                                NotchMetrics.maxAnswerHeight)
         // 进入问答后预留「问题(标签+最多2行,38) + 意图(18)」，使答案到达不再阶跃；
         // 纯 hover/ready 态（尚未进入问答）用紧凑 chrome(54)，下半不留空。
-        let chrome: CGFloat = reservesContentRows ? (62 + 38 + 18) : 54
+        // 与 NotchView.layoutExpanded 同源：那边会在可用高度里减掉同一个 inset。
+        let chrome: CGFloat = (reservesContentRows ? (62 + 38 + 18) : 54)
+            + NotchMetrics.answerBottomInset
         let desired = max(minimumExpandedHeight, chrome + answerHeight)
         // Leave room for the bottom shadow margin so the card never exceeds the display.
         return min(desired, floor(screen.frame.height) - NotchMetrics.shadowMarginBottom)

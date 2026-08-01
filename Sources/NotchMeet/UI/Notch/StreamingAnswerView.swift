@@ -184,7 +184,10 @@ final class StreamingAnswerView: NSView {
         ctx.saveGState()
         ctx.translateBy(x: 0, y: bounds.height)
         ctx.scaleBy(x: 1, y: -1)
-        let shift = Self.layoutHeight - bounds.height + scrollOffset
+        // 注意符号：翻转后这层空间是 y 向上的，shift 越大行原点越低。要「往下滚
+        // 看后文」就必须**减**去位移，让文字上移。加号会把正文推出视口，滚到底时
+        // 视口全空——单测只验数字、截图只看 offset=0 时两头都发现不了。
+        let shift = Self.layoutHeight - bounds.height - scrollOffset
 
         let lines = CTFrameGetLines(frame) as! [CTLine]
         var origins = [CGPoint](repeating: .zero, count: lines.count)

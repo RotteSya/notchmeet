@@ -115,4 +115,41 @@ final class FactQuickAnswerTests: XCTestCase {
         XCTAssertNotEqual(LatencyMonitor.TurnKind.fact, .cache)
         XCTAssertEqual(LatencyMonitor.TurnKind.fact.rawValue, "fact")
     }
+
+    // MARK: - 同一话题下的多条备忘（Codex review P1-2/P1-3）
+
+    /// 語学グループには TOEIC も JLPT も入る。話題だけで「最初の一件」を返すと、
+    /// TOEIC を聞かれて JLPT の値を読み上げる——数字を間違えるのは最悪の失敗。
+    func testPicksTheAskedScoreNotTheFirstOneInTheSameTopic() {
+        let facts = store("JLPT: N1\nTOEIC: 850点")
+        XCTAssertEqual(FactQuickAnswer.answer(for: "TOEICのスコアは？", facts: facts),
+                       "TOEICは850点です。")
+        XCTAssertEqual(FactQuickAnswer.answer(for: "JLPTは何級ですか。", facts: facts),
+                       "JLPTはN1です。")
+    }
+
+    /// 現年収と希望年収は同じ compensation グループ。取り違えは論外。
+    func testCurrentAndDesiredSalaryAreNotConfused() {
+        let facts = store("現年収: 350万円\n希望年収: 400万円")
+        XCTAssertEqual(FactQuickAnswer.answer(for: "希望年収はいくらですか。", facts: facts),
+                       "400万円を希望しております。")
+        // 現年収は事実であって要求ではない——願望形にしてはいけない。
+        let current = FactQuickAnswer.answer(for: "現年収を教えてください。", facts: facts)
+        XCTAssertEqual(current, "現年収は350万円です。")
+        XCTAssertFalse(current?.contains("希望しております") ?? false,
+                       "現状の事実が要求額に化けている")
+    }
+
+    /// どれとも決められないときは黙る（LLM に回す）。誤答より遅い方がまし。
+    func testAmbiguousTopicMatchStaysSilent() {
+        let facts = store("JLPT: N1\nTOEIC: 850点")
+        XCTAssertNil(FactQuickAnswer.answer(for: "語学力についてどうですか。", facts: facts),
+                     "两条都够不上唯一赢家时必须交给 LLM")
+    }
+
+    /// 単一のメモしか無い場合は従来どおり撃つ（曖昧さが無い）。
+    func testSingleNoteStillAnswersEvenWithLooseWording() {
+        let facts = store("TOEIC: 850点")
+        XCTAssertEqual(FactQuickAnswer.answer(for: "TOEICは？", facts: facts), "TOEICは850点です。")
+    }
 }

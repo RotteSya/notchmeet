@@ -79,6 +79,10 @@ enum NotchMetrics {
     /// 量高（NotchController.expandedHeight）与布局（NotchView.layoutExpanded）**必须**
     /// 用同一个上限，否则又回到「量出来的高度不等于画出来的高度」那类错位。
     static let maxAnswerHeight: CGFloat = 420
+
+    /// 答案区下方的留白。控制器量高与视图布局**必须**都算上它，否则视图侧多减一次，
+    /// 在问题占满两行时 available 会小于控制器已经按上限开好的面板，末行被削掉几像素。
+    static let answerBottomInset: CGFloat = 12
 }
 
 // MARK: - Small helpers

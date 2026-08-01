@@ -28,6 +28,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show(section: SettingsSection? = nil) {
         if let window, let root {
             if let section { root.show(section, animated: true) }
+            root.refreshVolatileSection()   // 复盘列表可能在窗口关闭期间变了
             root.setRunning(true)
             present(window)
             return

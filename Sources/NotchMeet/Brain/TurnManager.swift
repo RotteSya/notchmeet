@@ -35,6 +35,8 @@ final class TurnManager: @unchecked Sendable {
     private var currentSource: AnswerSource = .live
     /// 一轮定稿后回调（question, answer, source）。AppController 接到 SessionStore。
     var onTurnRecorded: ((String, String, AnswerSource) -> Void)?
+    /// recall-merge 撤回过早定稿的那一轮（与下面 history.removeLast 同一时机）。
+    var onTurnRetracted: ((String) -> Void)?
     private var history: [(q: String, a: String)] = []   // 深掘り context
 
     // Utterance coalescing (§6). 面接官は一続きの発話で「意見の表明・前置き＋本題」を話す：
@@ -138,6 +140,7 @@ final class TurnManager: @unchecked Sendable {
             disarmMerge()
             pendingQ = lastCommittedQ
             if history.last?.q == lastCommittedQ { history.removeLast() }
+            onTurnRetracted?(lastCommittedQ)
             NSLog("[turn] merge-recall: folding follow-up into prior setup")
         }
         pendingQ = pendingQ.isEmpty ? q : pendingQ + " " + q

@@ -22,16 +22,46 @@ enum FactQuickAnswer {
     /// 判定は二重：質問の話題タグとメモのラベルの話題タグが**同じ事実系グループ**で
     /// 重なること。片方だけでは撃たない。
     static func answer(for question: String, facts: FactStore) -> String? {
-        let questionTopics = QuestionMatcher.topics(in: QuestionMatcher.normalized(question))
-            .intersection(factualTopics)
+        let q = QuestionMatcher.normalized(question)
+        let questionTopics = QuestionMatcher.topics(in: q).intersection(factualTopics)
         guard !questionTopics.isEmpty else { return nil }
 
-        for (label, value) in facts.labeledNotes {
-            let labelTopics = QuestionMatcher.topics(in: QuestionMatcher.normalized(label))
-            guard !labelTopics.intersection(questionTopics).isEmpty else { continue }
-            return sentence(label: label, value: value)
+        // 同一话题下常常有多条备忘（TOEIC 与 JLPT 同属語学、現年収 与 希望年収 同属年収）。
+        // 只按话题取「第一条」＝按文件顺序回答，问 TOEIC 会答出 JLPT 的值。
+        // 所以话题只用来缩小范围，最终必须由**标签本身与问题的字面重合**决出唯一赢家；
+        // 分不出高下就返回 nil 交给 LLM——错答一个数字比慢一点严重得多。
+        let candidates = facts.labeledNotes.filter { label, _ in
+            !QuestionMatcher.topics(in: QuestionMatcher.normalized(label))
+                .intersection(questionTopics).isEmpty
         }
-        return nil
+        guard !candidates.isEmpty else { return nil }
+        // 候补只有一条＝没有歧义可言，照旧回答。「語学のスコアは？」对上唯一的
+        // TOEIC 备忘正是这条路径——要求字面重合会把它误伤掉。
+        if candidates.count == 1 {
+            return sentence(label: candidates[0].label, value: candidates[0].value)
+        }
+
+        let scored = candidates.map { (note: $0, score: labelAffinity(QuestionMatcher.normalized($0.label), in: q)) }
+        let best = scored.max { $0.score < $1.score }!
+        guard best.score > 0 else { return nil }                       // 谁都对不上 → 不撃つ
+        guard scored.filter({ $0.score == best.score }).count == 1 else { return nil }  // 并列 → 不撃つ
+        return sentence(label: best.note.label, value: best.note.value)
+    }
+
+    /// 标签与问题的字面贴合度。整标签出现在问题里最强（希望年収 ⊂「希望年収は？」）；
+    /// 否则按标签里出现在问题中的最长片段计——「現年収」与「希望年収」都含「年収」，
+    /// 只有把整标签算进去才能把它们分开。
+    private static func labelAffinity(_ label: String, in question: String) -> Int {
+        guard !label.isEmpty else { return 0 }
+        if question.contains(label) { return label.count * 10 }
+        let chars = Array(label)
+        var longest = 0
+        for start in chars.indices {
+            for end in stride(from: chars.count, to: start, by: -1) where end - start > longest {
+                if question.contains(String(chars[start..<end])) { longest = end - start; break }
+            }
+        }
+        return longest >= 2 ? longest : 0        // 单字重合太弱，不作数
     }
 
     /// ラベルと値だけから敬語一文を組む。値は**一切加工しない**——「400万円（応相談）」と
@@ -47,7 +77,11 @@ enum FactQuickAnswer {
         if l.contains("入社") || l.contains("着任") || l.contains("いつから") {
             return "\(value)から入社可能です。"
         }
-        if l.contains("年収") || l.contains("給与") || l.contains("給料") || l.contains("報酬") {
+        // 「希望」を明示するラベルだけ願望形にする。`現年収: 350万円` を
+        // 「350万円を希望しております」と読み上げると、現状の事実が要求額に化ける——
+        // 面接で最も誤解されたくない数字でそれをやってはいけない。
+        let wantsDesired = ["希望", "想定", "期待", "第一希望"].contains { l.contains($0) }
+        if wantsDesired, l.contains("年収") || l.contains("給与") || l.contains("給料") || l.contains("報酬") {
             return "\(value)を希望しております。"
         }
         return "\(label)は\(value)です。"

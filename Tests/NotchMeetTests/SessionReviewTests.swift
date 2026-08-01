@@ -128,4 +128,61 @@ final class SessionReviewTests: XCTestCase {
             XCTAssertTrue(mentions, "\(lang) 的删除文案没提面试复盘记录，但实际会删掉它")
         }
     }
+
+    // MARK: - Codex review 指出的三处
+
+    /// 只删文件、不清内存 → 复盘页照样列出已删的转录，而下一次 end() 会把内存里
+    /// 留存的整份历史写回磁盘：「已删除」当场变成假话。
+    func testClearingPreventsDeletedTranscriptsFromBeingWrittenBack() {
+        let s = store()
+        s.begin(scriptName: "第一场")
+        s.record(question: "Q1", answer: "A1", source: .live)
+        s.end()
+        XCTAssertEqual(store().sessions.count, 1)
+
+        s.clear()                                   // ＝「删除本地数据」时该做的事
+
+        s.begin(scriptName: "第二场")
+        s.record(question: "Q2", answer: "A2", source: .live)
+        s.end()
+
+        let after = store().sessions
+        XCTAssertEqual(after.count, 1, "已删除的场次不得随下一次保存复活")
+        XCTAssertEqual(after.first?.scriptName, "第二场")
+    }
+
+    /// recall-merge：前置陈述先被定稿记了一轮，随后合并成一问重答。
+    /// 不撤回就会一问变两条，把命中率冲淡。
+    func testRetractRemovesThePrematurelyRecordedTurn() {
+        let s = store()
+        s.begin(scriptName: nil)
+        s.record(question: "なるほど、そうですか。", answer: "A", source: .live)
+        s.retractLast(question: "なるほど、そうですか。")
+        s.record(question: "なるほど、そうですか。 では志望動機は？", answer: "B", source: .script)
+        s.end()
+
+        let session = try! XCTUnwrap(store().sessions.first)
+        XCTAssertEqual(session.turns.count, 1, "合并后应只剩合并那一轮")
+        XCTAssertEqual(session.turns.first?.source, .script)
+    }
+
+    /// 撤回只针对刚记下的那一条，不能误删别的。
+    func testRetractOnlyTouchesTheMatchingLastTurn() {
+        let s = store()
+        s.begin(scriptName: nil)
+        s.record(question: "Q1", answer: "A1", source: .script)
+        s.retractLast(question: "别的问题")
+        s.end()
+        XCTAssertEqual(store().sessions.first?.turns.count, 1)
+    }
+
+    /// 退出前的收尾入口必须存在——录音中直接退出不经过 stopRecording。
+    func testTerminationHookExists() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let delegate = try String(contentsOf: root.appendingPathComponent("Sources/NotchMeet/App/AppDelegate.swift"),
+                                  encoding: .utf8)
+        XCTAssertTrue(delegate.contains("applicationWillTerminate"), "缺少退出钩子，录音中退出会丢掉整场复盘")
+        XCTAssertTrue(delegate.contains("prepareForTermination"))
+    }
 }

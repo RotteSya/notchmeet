@@ -76,6 +76,15 @@ final class SessionStore {
         current?.turns.append(.init(question: q, answer: a, source: source, at: at))
     }
 
+    /// 撤回刚记下的一轮。recall-merge 会把「只有前置陈述」的那一轮重开并合并成一问，
+    /// 此时先前那条已经记进来了——不撤掉就会一问变两条，把命中率统计冲淡。
+    func retractLast(question: String) {
+        guard Settings.keepSessionHistory,
+              current?.turns.last?.question == question.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return }
+        current?.turns.removeLast()
+    }
+
     /// 结束本场并落盘。一问都没有的场次不留记录（点开又关掉不该产出一条空复盘）。
     @discardableResult
     func end() -> Bool {

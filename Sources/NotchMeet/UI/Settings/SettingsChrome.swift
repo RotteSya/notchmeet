@@ -133,6 +133,18 @@ final class SettingsRoot: NSView {
         sidebar.placePillImmediately(for: current)
     }
 
+    /// 重开设置窗口时刷新与磁盘状态相关的页面。窗口被保活以保留导航与滚动位置，
+    /// 于是「关掉设置 → 又面了一场 → 重开设置」会停在旧的复盘列表上（SessionStore
+    /// 不是 observable）。只重建复盘页：原稿页有编辑中的状态，不能无脑重建。
+    func refreshVolatileSection() {
+        guard current == .review else { return }
+        let rebuilt = makeSection(current)
+        mount(rebuilt)
+        currentView?.removeFromSuperview()
+        outgoing?.removeFromSuperview(); incoming = nil; outgoing = nil
+        currentView = rebuilt
+    }
+
     /// Pause/resume the Metal backdrop with window visibility.
     func setRunning(_ running: Bool) { backdrop.setRunning(running) }
 

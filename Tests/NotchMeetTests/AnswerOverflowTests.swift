@@ -108,4 +108,50 @@ final class AnswerOverflowTests: XCTestCase {
         XCTAssertTrue(view(height: 120).clipsToBounds,
                       "答案区必须裁剪到视口，否则封顶后的文字会画到卡片之外")
     }
+
+    /// 视口内的**文字**像素数。只数亮像素：按 alpha 数会把渐隐带（接近不透明的
+    /// 背景色）算进去，指标就废了。
+    private func textPixels(_ v: StreamingAnswerView) throws -> Int {
+        final class FlippedBox: NSView { override var isFlipped: Bool { true } }
+        let box = FlippedBox(frame: v.bounds)
+        box.addSubview(v)
+        let rep = try XCTUnwrap(box.bitmapImageRepForCachingDisplay(in: box.bounds))
+        box.cacheDisplay(in: box.bounds, to: rep)
+        var ink = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if c.alphaComponent > 0.5, c.brightnessComponent > 0.55 { ink += 1 }
+            }
+        }
+        return ink
+    }
+
+    /// 逐字出生动画跑完再测量。不等的话读数是动画中途的半透明状态，同一份代码
+    /// 两次跑能差一个数量级——我就是被这个骗过一次，误判方向修复无效。
+    private func settleBirths() {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+    }
+
+    /// **滚动方向**：往下滚要露出后文，而不是把正文推出视口。
+    ///
+    /// scrollOffset 夹取范围对，不代表方向对。翻转后那层空间是 y 向上的，shift 越大
+    /// 行原点越低——把位移**加**进 shift 会让文字往下跑，滚到底时视口全空，而用户
+    /// 以为答案没了。实测：加号下墨迹 7452→5347→1835→0，减号下始终 ~7000。
+    func testScrollingDownRevealsLaterTextInsteadOfPushingItAway() throws {
+        let v = view(height: 100)
+        v.setText(longAnswer)
+        settleBirths()
+        XCTAssertGreaterThan(v.maxScroll, 0, "前提：内容要超出视口")
+
+        let atTop = try textPixels(v)
+        XCTAssertGreaterThan(atTop, 0, "顶部应当有文字")
+
+        v.scroll(by: -v.maxScroll)                 // 滚到底
+        XCTAssertEqual(v.scrollOffset, v.maxScroll, accuracy: 0.5)
+
+        let atBottom = try textPixels(v)
+        XCTAssertGreaterThan(atBottom, atTop / 2,
+                             "滚到底后视口几乎空了（\(atBottom) vs \(atTop)）——方向反了")
+    }
 }
