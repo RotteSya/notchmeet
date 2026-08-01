@@ -26,21 +26,21 @@ final class FactsEditorTests: XCTestCase {
         let sheet = FactsTextFormat.parse("""
             # 経験: □□株式会社でのインターン
             役割: 運営チームリーダー
-            期間: 2024.07-2024.09
+            期間: 20XX.07-20XX.09
             行動: 5名のチームをまとめた
             行動: 手順を再設計した
             成果: 待ち時間を20%短縮
-            スキル: 多国籍チーム運営 / 調整力
+            スキル: チーム運営 / 調整力
             """)
 
         XCTAssertEqual(sheet.experiences.count, 1)
         let e = try! XCTUnwrap(sheet.experiences.first)
         XCTAssertEqual(e.org, "□□株式会社でのインターン")
         XCTAssertEqual(e.role, "運営チームリーダー")
-        XCTAssertEqual(e.period, "2024.07-2024.09")
+        XCTAssertEqual(e.period, "20XX.07-20XX.09")
         XCTAssertEqual(e.actions, ["5名のチームをまとめた", "手順を再設計した"], "同じラベルは積み上がる")
         XCTAssertEqual(e.results, ["待ち時間を20%短縮"])
-        XCTAssertEqual(e.skills, ["多国籍チーム運営", "調整力"], "スキルだけは区切り文字で分割する")
+        XCTAssertEqual(e.skills, ["チーム運営", "調整力"], "スキルだけは区切り文字で分割する")
     }
 
     /// 数字类速答的素材（希望年収 / 入社可能時期 / TOEIC）走 notes——这是这一页存在的主要理由。
@@ -48,10 +48,10 @@ final class FactsEditorTests: XCTestCase {
         let sheet = FactsTextFormat.parse("""
             # メモ
             希望年収: 400万円
-            入社可能時期: 2026年4月
+            入社可能時期: 20XX年4月
             - TOEIC: 850点
             """)
-        XCTAssertEqual(sheet.notes, ["希望年収: 400万円", "入社可能時期: 2026年4月", "TOEIC: 850点"],
+        XCTAssertEqual(sheet.notes, ["希望年収: 400万円", "入社可能時期: 20XX年4月", "TOEIC: 850点"],
                        "行頭の記号は剥がすが、中身の「ラベル: 値」はそのまま残す")
     }
 
@@ -85,8 +85,8 @@ final class FactsEditorTests: XCTestCase {
 
     /// 直接粘一段自我介绍（没有任何标题）不能全部丢掉——当作简介收下。
     func testTextBeforeAnyHeadingBecomesProfile() {
-        let sheet = FactsTextFormat.parse("△△大学大学院で経営学を専攻しています。")
-        XCTAssertEqual(sheet.profile, "△△大学大学院で経営学を専攻しています。")
+        let sheet = FactsTextFormat.parse("△△大学大学院で〇〇を専攻しています。")
+        XCTAssertEqual(sheet.profile, "△△大学大学院で〇〇を専攻しています。")
         XCTAssertTrue(sheet.experiences.isEmpty)
     }
 
@@ -130,6 +130,17 @@ final class FactsEditorTests: XCTestCase {
         XCTAssertFalse(sheet.notes.isEmpty, "示例必须包含数字类备忘——那正是这一页要解决的问题")
     }
 
+    /// 示例会进公开仓库、也会被任何用户看到——必须完全虚构，不含任何真实的学校、
+    /// 国籍、实习单位或年份。这里列的是曾经出现过的具体值，作为回归的黑名单。
+    func testBundledSampleContainsNoRealPersonalDetails() {
+        let sample = FactsTextFormat.sample
+        let leaks = ["△△大学", "海外出身", "□□展示会", "大阪", "2024", "2025", "2026",
+                     "早稲田", "慶應", "東京大学"]
+        for leak in leaks {
+            XCTAssertFalse(sample.contains(leak), "示例里出现了可指向真人的信息：\(leak)")
+        }
+    }
+
     // MARK: - 落盘
 
     func testSavePersistsAndReloads() {
@@ -160,12 +171,12 @@ final class FactsEditorTests: XCTestCase {
         XCTAssertTrue(store.save(FactsTextFormat.parse("""
             # メモ
             希望年収: 400万円
-            入社可能時期: 2026年4月
+            入社可能時期: 20XX年4月
             """)))
 
         let context = FactStore().context(for: "希望年収はどのくらいですか")
         XCTAssertTrue(context.contains("400万円"), "存下的事实必须进入生成上下文")
-        XCTAssertTrue(context.contains("2026年4月"))
+        XCTAssertTrue(context.contains("20XX年4月"))
     }
 
     func testSaveFailureIsReportedNotSwallowed() {
