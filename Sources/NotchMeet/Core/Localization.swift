@@ -125,6 +125,15 @@ struct AppStrings {
         pick("（回答生成失败：\(detail)）", "（回答生成エラー：\(detail)）")
     }
 
+    /// 回看态的刘海头部。必须一眼可辨「这是旧的」——否则用户会照着上一题的答案回答这一题。
+    func notchReviewing(position: Int, count: Int) -> String {
+        pick("回看 \(position)/\(count) · 这是之前的回答",
+             "見返し \(position)/\(count) · 前の回答です")
+    }
+    var reviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }
+    var reviewReturnLive: String { pick("回到当前", "現在に戻る") }
+    var hotkeyReviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }
+
     var copyAnswer: String { pick("拷贝回答", "回答をコピー") }
     var editMenu: String { pick("编辑", "編集") }
     var cut: String { pick("剪切", "切り取り") }

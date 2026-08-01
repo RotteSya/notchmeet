@@ -21,6 +21,15 @@ final class AnswerModel: ObservableObject {
     /// 剩余额度秒数；nil = 本场不计量（BYO/本地）→ 刘海不显示额度胶囊。
     /// 只在计量会话进行中由 AppController 持续写入（每秒随扣费刷新）。
     @Published var creditSeconds: Int?
+    /// 非 nil = 此刻显示的是**过去**的某条回答（用户按 ⌘⇧B 回看），由 `AnswerHistory` 写入。
+    /// 刘海据此换上醒目的回看标识：旧答案绝不能被读成当前该说的话。
+    @Published var review: ReviewBadge?
+
+    /// 第 `position` 条 / 共 `count` 条（position 为 1 起的显示序号）。
+    struct ReviewBadge: Equatable {
+        let position: Int
+        let count: Int
+    }
 }
 
 /// Single display contract for the notch. Non-empty answers are returned byte-for-byte:

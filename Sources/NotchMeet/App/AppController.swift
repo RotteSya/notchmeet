@@ -13,6 +13,8 @@ final class AppController {
     private let scriptStore = ScriptStore()
     private let control = ControlPanel()
     private let inactivity = InactivityMonitor()
+    /// 本场已显示过的回答（全文，仅内存）。被追问打断时用 ⌘⇧B 回看上一条。
+    private lazy var answerHistory = AnswerHistory(model: notch.model)
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
     private let demoVoice = DemoVoice()
@@ -111,11 +113,22 @@ final class AppController {
         control.onManageScripts = { [weak self] in self?.openSettings(section: .scripts) }
         control.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
         control.onToggleVisibility = { [weak self] in self?.notch.toggleVisibility() }
+        control.onReviewPrevious = { [weak self] in self?.answerHistory.stepBack() }
+        control.onReviewReturnLive = { [weak self] in self?.answerHistory.returnToLive() }
+        control.reviewStateProvider = { [weak self] in
+            guard let self else { return (canStepBack: false, isReviewing: false) }
+            return (canStepBack: self.answerHistory.canStepBack, isReviewing: self.answerHistory.isReviewing)
+        }
         HotKeyCenter.shared.register(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
             self?.notch.toggleVisibility()
         }
         HotKeyCenter.shared.register(keyCode: UInt32(kVK_ANSI_P), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
             self?.toggleRecording()
+        }
+        // 回看上一条回答。单键循环：退到最早一条后再按即回到当前，因此不必再占一个
+        // 全局热键——每多注册一个组合键，就多抢走一次 Zoom/浏览器里的同名快捷键。
+        HotKeyCenter.shared.register(keyCode: UInt32(kVK_ANSI_B), modifiers: UInt32(cmdKey | shiftKey)) { [weak self] in
+            self?.answerHistory.stepBack()
         }
         // The interviewer has been silent for the whole timeout window → stop recording
         // (back to armed/ready), so a forgotten session doesn't keep uploading silence.
@@ -197,6 +210,9 @@ final class AppController {
             // socket opens — we never start uploading when there is nothing to capture.
             if let audio { try audio.start(); captureStarted = true; inactivity.start() }
             try stt.start()
+            // 新一场面试：上一场的回答不能出现在这一场的回看里（拿上一家公司的答案
+            // 回答这一家，正是这个 app 最不能犯的错）。
+            answerHistory.reset()
             setRecording(true)
             credit.beginSession(metered: metered)
             startConnectionKeepWarm()
@@ -547,7 +563,8 @@ final class AppController {
     /// presses Start (⌘⇧P / notch) to begin, same gate as the live pipeline.
     private func armPipeline(stt: SttClient, generator: AnswerGenerator) {
         let tm = TurnManager(model: notch.model, generator: generator,
-                             knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore)
+                             knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
+                             answerHistory: answerHistory)
         tm.paused = true
         stt.onTranscript = { [weak tm] t in
             DispatchQueue.main.async { tm?.handleTranscript(t) }
@@ -587,7 +604,8 @@ final class AppController {
         let generator = ProviderRegistry.makeGenerator()
         let sttc = ProviderRegistry.makeStt()
         let tm = TurnManager(model: notch.model, generator: generator,
-                             knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore)
+                             knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
+                             answerHistory: answerHistory)
         tm.paused = true   // ignore transcripts until the session actually starts
 
         sttc.onTranscript = { [weak tm, weak self] t in
@@ -732,6 +750,14 @@ final class AppController {
         // （>600 中性、≤600 琥珀 mm:ss、≤180 红色）。
         if let raw = ProcessInfo.processInfo.environment["FI_UI_CREDIT"], let sec = Int(raw) {
             model.creditSeconds = sec
+        }
+        // 视觉 QA：FI_UI_REVIEW=<第几条>/<共几条> 叠加回看标识（状态行转琥珀）。
+        // 状态机本身由 AnswerHistoryTests 覆盖，这里只为看渲染。
+        if let raw = ProcessInfo.processInfo.environment["FI_UI_REVIEW"] {
+            let parts = raw.split(separator: "/").compactMap { Int($0) }
+            if parts.count == 2 {
+                model.review = AnswerModel.ReviewBadge(position: parts[0], count: parts[1])
+            }
         }
     }
 }

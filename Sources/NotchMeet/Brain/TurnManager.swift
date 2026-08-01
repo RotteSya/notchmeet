@@ -18,6 +18,8 @@ final class TurnManager: @unchecked Sendable {
     private let router: Router
     private let bank: AnswerBank?
     private let scriptStore: ScriptStore?
+    /// 供临场回看的全文记录（与下面那份喂 LLM 的摘要 `history` 分开，见 AnswerHistory）。
+    private let answerHistory: AnswerHistory?
     let latency = LatencyMonitor()
     private let sttDebug = ProcessInfo.processInfo.environment["FI_STT_DEBUG"] == "1"
 
@@ -88,13 +90,15 @@ final class TurnManager: @unchecked Sendable {
          knowledge: KnowledgeProvider = NullKnowledge(),
          router: Router = NullRouter(),
          bank: AnswerBank? = nil,
-         scriptStore: ScriptStore? = nil) {
+         scriptStore: ScriptStore? = nil,
+         answerHistory: AnswerHistory? = nil) {
         self.model = model
         self.generator = generator
         self.knowledge = knowledge
         self.router = router
         self.bank = bank
         self.scriptStore = scriptStore
+        self.answerHistory = answerHistory
     }
 
     /// Feed STT events. Call on the main thread. Finals are not answered immediately; they are
@@ -241,6 +245,9 @@ final class TurnManager: @unchecked Sendable {
         epoch += 1
         let myEpoch = epoch
         liveTask?.cancel(); routerTask?.cancel()
+        // 用户可能正在回看旧答案。新问题来了就必须回到当下——面试里落后于此刻，
+        // 比看不到上一条更致命。不还原快照：下面几行马上要写这一轮自己的问题与状态。
+        answerHistory?.abandonReview()
         state = .generating
         liveBuffer = ""
         liveIsCommittedSource = false
@@ -456,6 +463,10 @@ final class TurnManager: @unchecked Sendable {
         model.status = .presenting
         model.message = .completed
         recordHistory()
+        // 全文入回看记录。传 epoch 而不是问题文本：迟到的原稿命中会让同一轮再次定稿，
+        // 按 epoch 就地更新才不会把同一轮堆成两条（面试官重复同一问题时也不会误合并）。
+        answerHistory?.record(epoch: myEpoch, question: currentQuestion,
+                              answer: model.answer, intent: model.intentLabel)
     }
 
     private func recordHistory() {

@@ -64,6 +64,7 @@ final class GeneralSection: SectionScroll {
 
         let hotkeyVis = SKText.label("⌘⇧Space", font: SK.mono(13, .medium), color: SK.ink)
         let hotkeyRec = SKText.label("⌘⇧P", font: SK.mono(13, .medium), color: SK.ink)
+        let hotkeyReview = SKText.label("⌘⇧B", font: SK.mono(13, .medium), color: SK.ink)
 
         let title = SKBuild.pageTitle(s.secGeneral)
         scroll.setRows([
@@ -77,6 +78,7 @@ final class GeneralSection: SectionScroll {
             SKBuild.divider(),
             SKBuild.controlRow(s.hotkeyToggleVisibility, control: hotkeyVis, help: nil, vPad: 14),
             SKBuild.controlRow(s.hotkeyToggleRecording, control: hotkeyRec, help: nil, vPad: 14),
+            SKBuild.controlRow(s.hotkeyReviewPrevious, control: hotkeyReview, help: nil, vPad: 14),
             SKBuild.divider(),
         ])
         scroll.gap(18, after: title)

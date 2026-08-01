@@ -25,6 +25,11 @@ final class ControlPanel: NSObject {
     }
 
     var onToggleRecording: (() -> Void)?
+    /// 回看上一条已显示过的回答 / 回到当前。被追问打断时上一条不再永久丢失。
+    var onReviewPrevious: (() -> Void)?
+    var onReviewReturnLive: (() -> Void)?
+    /// 当前是否有更早的回答可看、是否正在回看——菜单据此显示，不给死按钮。
+    var reviewStateProvider: (() -> (canStepBack: Bool, isReviewing: Bool))?
     /// 显示/隐藏刘海。此前这一项挂在空实现上：菜单可点、毫无反应，
     /// 真正的实现只绑在热键（⌘⇧H）上。
     var onToggleVisibility: (() -> Void)?
@@ -95,6 +100,18 @@ final class ControlPanel: NSObject {
         let isRecording = recordingProvider?() ?? false
         add(menu, isRecording ? t.stopRecording : t.startRecording, #selector(recordTapped))
 
+        // 回看：热键 ⌘⇧B 是面试中真正会用的入口（菜单要动鼠标、还会多亮一块 UI），
+        // 这两项只为可发现性存在，没有可看的东西时置灰而不是给一个没反应的按钮。
+        let review = reviewStateProvider?() ?? (canStepBack: false, isReviewing: false)
+        if review.canStepBack || review.isReviewing {
+            if review.canStepBack {
+                add(menu, "\(t.reviewPrevious)  ⌘⇧B", #selector(reviewPreviousTapped))
+            }
+            if review.isReviewing {
+                add(menu, t.reviewReturnLive, #selector(reviewReturnLiveTapped))
+            }
+        }
+
         // Active-script picker for THIS interview (management lives in the settings window).
         let scriptItem = NSMenuItem(title: t.thisInterviewScript, action: nil, keyEquivalent: "")
         scriptItem.submenu = buildScriptMenu(t)
@@ -145,6 +162,8 @@ final class ControlPanel: NSObject {
     }
 
     @objc private func recordTapped() { toggleRecording() }
+    @objc private func reviewPreviousTapped() { onReviewPrevious?() }
+    @objc private func reviewReturnLiveTapped() { onReviewReturnLive?() }
     @objc private func openSettingsTapped() { onOpenSettings?() }
     @objc private func openWalletTapped() { onOpenWallet?() }
     @objc private func manageScriptsTapped() { onManageScripts?() }
