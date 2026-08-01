@@ -130,15 +130,33 @@ final class FactsEditorTests: XCTestCase {
         XCTAssertFalse(sheet.notes.isEmpty, "示例必须包含数字类备忘——那正是这一页要解决的问题")
     }
 
-    /// 示例会进公开仓库、也会被任何用户看到——必须完全虚构，不含任何真实的学校、
-    /// 国籍、实习单位或年份。这里列的是曾经出现过的具体值，作为回归的黑名单。
-    func testBundledSampleContainsNoRealPersonalDetails() {
+    /// 示例会进公开仓库、也会被任何用户看到——必须完全虚构。
+    ///
+    /// 判据是**形状**而不是黑名单：黑名单要把真实的学校名、实习单位写进仓库才能比对，
+    /// 那等于为了防泄漏先泄漏一遍。这里只要求每个专有名词位都是占位符、年份一律 20XX。
+    func testBundledSampleIsFullyFictional() {
         let sample = FactsTextFormat.sample
-        let leaks = ["△△大学", "海外出身", "□□展示会", "大阪", "2024", "2025", "2026",
-                     "早稲田", "慶應", "東京大学"]
-        for leak in leaks {
-            XCTAssertFalse(sample.contains(leak), "示例里出现了可指向真人的信息：\(leak)")
+
+        // 具体年份 = 可定位到真人的时间线。示例里只允许 20XX 这种占位写法。
+        let years = try! NSRegularExpression(pattern: "(19|20)[0-9]{2}")
+        let range = NSRange(sample.startIndex..., in: sample)
+        XCTAssertEqual(years.numberOfMatches(in: sample, range: range), 0,
+                       "示例里出现了具体年份——用 20XX 占位")
+
+        // 解析后逐个专有名词位检查：学校（简介）、实习单位、志望企业、研究室。
+        func isPlaceholder(_ s: String) -> Bool {
+            s.contains("〇") || s.contains("△") || s.contains("□")
         }
+        let sheet = FactsTextFormat.parse(sample)
+        XCTAssertTrue(isPlaceholder(try! XCTUnwrap(sheet.profile)), "简介里的学校名不是占位符")
+        for e in sheet.experiences {
+            XCTAssertTrue(isPlaceholder(e.org), "经历单位不是占位符：\(e.org)")
+        }
+        for m in sheet.motivations {
+            XCTAssertTrue(isPlaceholder(try! XCTUnwrap(m.targetCompany)), "志望企业不是占位符")
+        }
+        let lab = try! XCTUnwrap(sheet.notes.first { $0.contains("研究室") })
+        XCTAssertTrue(isPlaceholder(lab), "研究室不是占位符：\(lab)")
     }
 
     // MARK: - 落盘
