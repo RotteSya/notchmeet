@@ -62,6 +62,16 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "nm_send_context") }
     }
 
+    /// 是否把每场面试的问答留在本机供复盘（审计 #21）。
+    ///
+    /// 默认开——「哪几问没命中我准备的内容」是唯一能让人越面越准的信号，关掉这个功能
+    /// 就退回「打十场也不会变好」。但它存的是面试转录，是本 app 最敏感的数据：仅本机、
+    /// 0600、进「删除本地数据」清单、隐私页明说，并且可以在这里关掉（关掉即不再记录）。
+    static var keepSessionHistory: Bool {
+        get { UserDefaults.standard.object(forKey: "nm_keep_sessions") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "nm_keep_sessions") }
+    }
+
     /// 是否允许「预生成回答」使用本机安装的 claude / codex CLI。
     ///
     /// 默认开：它走用户自己的账号、不消耗本应用额度，质量通常也更好。但它与

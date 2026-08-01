@@ -15,6 +15,8 @@ final class AppController {
     private let inactivity = InactivityMonitor()
     /// 本场已显示过的回答（全文，仅内存）。被追问打断时用 ⌘⇧B 回看上一条。
     private lazy var answerHistory = AnswerHistory(model: notch.model)
+    /// 面试复盘记录（仅本机、可关、进「删除本地数据」）。
+    private let sessions = SessionStore()
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
     private let demoVoice = DemoVoice()
@@ -213,6 +215,7 @@ final class AppController {
             // 新一场面试：上一场的回答不能出现在这一场的回看里（拿上一家公司的答案
             // 回答这一家，正是这个 app 最不能犯的错）。
             answerHistory.reset()
+            sessions.begin(scriptName: scriptStore.active?.displayLabel)
             setRecording(true)
             credit.beginSession(metered: metered)
             startConnectionKeepWarm()
@@ -283,6 +286,9 @@ final class AppController {
         stopConnectionKeepWarm()
         captureStarted = false
         setRecording(false)
+        // 本场落盘供复盘。stopRecording 是幂等的（多条 teardown 路径都会走到），
+        // SessionStore.end 对「没有进行中的会话」同样幂等。
+        sessions.end()
         enterReady()
     }
 
@@ -435,7 +441,7 @@ final class AppController {
     /// pipeline restart. Key changes reload the pipeline (may flip mock⇄live).
     private func openSettings(section: SettingsSection? = nil) {
         if settingsWindow == nil {
-            let s = SettingsWindowController(store: scriptStore, factStore: facts)
+            let s = SettingsWindowController(store: scriptStore, factStore: facts, sessionStore: sessions)
             s.onKeysChanged = { [weak self] in self?.reloadPipeline() }
             s.onBuildBank = { [weak self] in self?.runPrep() }
             s.onDeleteData = { [weak self] in
@@ -567,6 +573,9 @@ final class AppController {
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.onTurnRecorded = { [weak self] q, a, source in
+            self?.sessions.record(question: q, answer: a, source: source)
+        }
         tm.paused = true
         stt.onTranscript = { [weak tm] t in
             DispatchQueue.main.async { tm?.handleTranscript(t) }
@@ -608,6 +617,9 @@ final class AppController {
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.onTurnRecorded = { [weak self] q, a, source in
+            self?.sessions.record(question: q, answer: a, source: source)
+        }
         tm.paused = true   // ignore transcripts until the session actually starts
 
         sttc.onTranscript = { [weak tm, weak self] t in

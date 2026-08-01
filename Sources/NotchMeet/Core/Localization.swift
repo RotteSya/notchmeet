@@ -169,6 +169,39 @@ struct AppStrings {
              "「プライバシー」で送信をオフにしています。これらの事実は本機に留まり、AI には送られません（回答は一般的になります）。")
     }
 
+    // MARK: - 面试复盘（设置 → 面试复盘）
+
+    var secReview: String { pick("面试复盘", "面接の振り返り") }
+    var reviewEmpty: String {
+        pick("还没有记录。面试结束后，这里会列出哪些问题命中了你准备的内容、哪些是现场生成的——未命中的那几条就是下次该往稿子里补的题目。",
+             "まだ記録がありません。面接が終わると、どの質問が準備した内容に当たり、どれがその場生成だったかがここに並びます——当たらなかった質問が、次に原稿へ足すべき項目です。")
+    }
+    var reviewDisabled: String {
+        pick("复盘记录已在「隐私与数据」中关闭，因此没有留下任何记录。",
+             "「プライバシー」で振り返りの保存をオフにしているため、記録は残っていません。")
+    }
+    func reviewHitRate(hit: Int, total: Int) -> String {
+        pick("\(total) 问 · 命中准备内容 \(hit)", "\(total) 問 · 準備した内容に \(hit) 件命中")
+    }
+    var reviewAllHit: String { pick("全部命中了准备的内容", "すべて準備した内容で答えられました") }
+    func reviewMissesTitle(_ n: Int) -> String {
+        pick("未命中 \(n) 问（下次可补进稿子）", "未命中 \(n) 問（次は原稿に追加を）")
+    }
+    func reviewMoreMisses(_ n: Int) -> String {
+        pick("…还有 \(n) 问", "…ほか \(n) 問")
+    }
+    var reviewClear: String { pick("清除全部复盘记录", "振り返りをすべて削除") }
+    var reviewClearConfirmTitle: String { pick("清除全部复盘记录？", "振り返りをすべて削除しますか？") }
+    var reviewClearConfirmBody: String {
+        pick("将删除本机保存的全部面试问答记录。此操作不可撤销。",
+             "本機に保存された面接の問答記録をすべて削除します。取り消せません。")
+    }
+    var keepSessionsLabel: String { pick("保存面试复盘记录", "面接の振り返りを保存") }
+    var keepSessionsHelp: String {
+        pick("开启时，每场面试的问答会保存在本机，供「面试复盘」查看哪些问题没命中你的原稿。仅本机保存、不上传，随「删除本地数据」一并清除。关闭后不再记录。",
+             "オンにすると、各面接の問答を本機に保存し、「振り返り」でどの質問が原稿に当たらなかったかを確認できます。本機のみ・送信なし・「ローカルデータを削除」で消えます。オフにすると記録しません。")
+    }
+
     var reviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }
     var reviewReturnLive: String { pick("回到当前", "現在に戻る") }
     var hotkeyReviewPrevious: String { pick("回看上一条回答", "前の回答を見返す") }
@@ -330,8 +363,8 @@ struct AppStrings {
         pick("确认删除全部本地数据？", "すべてのローカルデータを削除しますか？")
     }
     var deleteConfirmBody: String {
-        pick("将永久删除：面试原稿、答案库、简历事实，以及全部服务密钥（Deepgram · Gemini · Anthropic · DeepSeek · 通义千问）。此操作不可撤销。",
-             "面接原稿、回答バンク、履歴書ファクト、およびすべてのサービスキー（Deepgram・Gemini・Anthropic・DeepSeek・通義千問）を完全に削除します。この操作は取り消せません。")
+        pick("将永久删除：面试原稿、答案库、简历事实、面试复盘记录，以及全部服务密钥（Deepgram · Gemini · Anthropic · DeepSeek · 通义千问）。此操作不可撤销。",
+             "面接原稿、回答バンク、履歴書ファクト、面接の振り返り記録、およびすべてのサービスキー（Deepgram・Gemini・Anthropic・DeepSeek・通義千問）を完全に削除します。この操作は取り消せません。")
     }
 
     // MARK: Recording consent (data-use disclosure shown before the first recording)

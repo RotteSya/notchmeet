@@ -23,7 +23,9 @@ enum LocalData {
             dirs.append(appSup.appendingPathComponent("notchmeet").path)
         }
         for dir in Set(dirs) {
-            for f in ["facts.json", "answer_bank.json", "scripts.json", "script.json"] {
+            // sessions.json = 面试转录，是这些文件里最敏感的一份，绝不能漏。
+            for f in ["facts.json", "answer_bank.json", "scripts.json", "script.json",
+                      "sessions.json"] {
                 let p = dir + "/" + f
                 guard fm.fileExists(atPath: p) else { continue }
                 do { try fm.removeItem(atPath: p) } catch {

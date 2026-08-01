@@ -376,6 +376,7 @@ final class PrivacySection: SectionScroll {
         let s = self.s
 
         let toggle = SKToggle(isOn: Settings.sendContextToLLM) { Settings.sendContextToLLM = $0 }
+        let sessionsToggle = SKToggle(isOn: Settings.keepSessionHistory) { Settings.keepSessionHistory = $0 }
 
         let popup = SKPopup(items: appOptions(), selectedID: Settings.captureTargetBundleID ?? "") { id in
             Settings.captureTargetBundleID = id.isEmpty ? nil : id
@@ -397,6 +398,9 @@ final class PrivacySection: SectionScroll {
             SKBuild.textBlock(s.privacyDataFlowTitle, dataFlow, vPad: 24),
             SKBuild.divider(),
             SKBuild.controlRow(s.sendContextLabel, control: toggle, help: s.sendContextHelp, vPad: 18),
+            SKBuild.divider(),
+            SKBuild.controlRow(s.keepSessionsLabel, control: sessionsToggle,
+                               help: s.keepSessionsHelp, vPad: 18),
             SKBuild.divider(),
             SKBuild.stackedControl(s.captureTargetLabel, control: popup, help: s.captureTargetHelp),
             SKBuild.divider(),
