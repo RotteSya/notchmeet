@@ -281,11 +281,12 @@ enum SKText {
 
     static func attributed(_ string: String, font: NSFont, color: NSColor,
                            tracking: CGFloat = 0, align: NSTextAlignment = .left,
-                           lineSpacing: CGFloat = 0) -> NSAttributedString {
+                           lineSpacing: CGFloat = 0,
+                           lineBreak: NSLineBreakMode = .byWordWrapping) -> NSAttributedString {
         let p = NSMutableParagraphStyle()
         p.alignment = align
         p.lineSpacing = lineSpacing
-        p.lineBreakMode = .byWordWrapping
+        p.lineBreakMode = lineBreak
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: p]
         if tracking != 0 { attrs[.kern] = tracking }
         return NSAttributedString(string: string, attributes: attrs)

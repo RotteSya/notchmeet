@@ -206,13 +206,25 @@ final class SKSegmented: NSControl {
     private var tracking: NSTrackingArea?
     private var hoverIndex: Int = -1
 
+    /// Widest label, measured once — `titles` never change, and Auto Layout asks for the
+    /// intrinsic size on every pass.
+    private let widestTitle: CGFloat
+
     init(titles: [String], selected: Int, action: @escaping (Int) -> Void) {
         self.titles = titles
         self.selected = selected
         self.onChange = action
         self.thumb = Spring(CGFloat(selected), stiffness: 360, damping: 30)
+        // Measured at the *selected* (semibold) weight — the lit segment is the widest state
+        // a label ever draws in, and a slot sized for the medium weight would clip on selection.
+        self.widestTitle = titles
+            .map { SKText.attributed($0, font: SK.font(12.5, .semibold), color: .white).size().width }
+            .max()?.rounded(.up) ?? 0
         super.init(frame: .zero)
         wantsLayer = true
+        // Natural width is a preference, not a demand: a row narrower than the segments can
+        // hold squeezes the control and the labels truncate (below) rather than overflowing it.
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setAccessibilityRole(.radioGroup)
         loopHost = DisplayLoop(host: self)
         loopHost?.onTick = { [weak self] dt in self?.tick(dt) ?? false }
@@ -222,7 +234,13 @@ final class SKSegmented: NSControl {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: max(180, CGFloat(titles.count) * 90), height: 30) }
+
+    /// Segments are equal width, so the natural size is the widest label plus breathing room.
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: max(180, (widestTitle + Self.segPad) * CGFloat(titles.count) + 4), height: 30)
+    }
+    private static let segPad: CGFloat = 20
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func setSelected(_ i: Int, animated: Bool = true) {
@@ -292,7 +310,8 @@ final class SKSegmented: NSControl {
         SKDither.paint(ctx, in: thumbRect, alpha: 0.02)
         strokeInset(ctx, thumbPath, hair, SK.ink(0.20))
 
-        // Labels.
+        // Labels — drawn *into* their segment rather than centred at a point, so a long
+        // localisation truncates with an ellipsis instead of bleeding over its neighbours.
         for (i, title) in titles.enumerated() {
             let dist = abs(CGFloat(i) - thumb.value)
             let onThumb = 1 - min(dist, 1)
@@ -300,10 +319,11 @@ final class SKSegmented: NSControl {
             let lit = SK.ink
             let color = base.blended(withFraction: onThumb, of: lit) ?? lit
             let weight: NSFont.Weight = onThumb > 0.5 ? .semibold : .medium
-            let attr = SKText.attributed(title, font: SK.font(12.5, weight), color: color)
-            let s = attr.size()
+            let attr = SKText.attributed(title, font: SK.font(12.5, weight), color: color,
+                                         align: .center, lineBreak: .byTruncatingTail)
+            let h = attr.size().height
             let segX = 2 + CGFloat(i) * sw
-            attr.draw(at: CGPoint(x: segX + (sw - s.width) / 2, y: b.midY - s.height / 2))
+            attr.draw(in: CGRect(x: segX + 5, y: b.midY - h / 2, width: max(0, sw - 10), height: h))
         }
     }
 

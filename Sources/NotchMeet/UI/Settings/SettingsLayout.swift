@@ -240,6 +240,9 @@ enum SKBuild {
             t.trailingAnchor.constraint(lessThanOrEqualTo: c.trailingAnchor),
             control.topAnchor.constraint(equalTo: t.bottomAnchor, constant: 11),
             control.leadingAnchor.constraint(equalTo: c.leadingAnchor),
+            // The row measure is the ceiling: a control sized from its own content (the STT
+            // segmented picker) squeezes to fit rather than spilling past the column.
+            control.trailingAnchor.constraint(lessThanOrEqualTo: c.trailingAnchor),
         ]
         var lastBottom = control.bottomAnchor
         if let help {
