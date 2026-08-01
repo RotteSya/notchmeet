@@ -750,7 +750,10 @@ final class AppController {
             model.intentLabel = "自己紹介"; model.answer = answer
         case "overflow":
             model.recording = true; model.status = .presenting; model.message = .completed
-            model.intentLabel = "長文回答"; model.answer = Array(repeating: answer, count: 3).joined()
+            // 8 段 ≈ 1000 字：必须真的超过 NotchMetrics.maxAnswerHeight，否则这个
+            // fixture 就验不到「封顶 + 区内滚动 + 渐隐」那条路径（封顶前 3 段就够溢出屏幕，
+            // 封顶后 3 段落在上限之内）。
+            model.intentLabel = "長文回答"; model.answer = Array(repeating: answer, count: 8).joined()
         case "error":
             model.recording = true; model.status = .error; model.message = .generationError
             model.errorDetail = "接続を確認してください。"

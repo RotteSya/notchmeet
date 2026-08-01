@@ -51,10 +51,25 @@ final class StreamingAnswerView: NSView {
     private static let rise: CGFloat = 3
     /// CT 布局路径的高度（真实高度由量高决定；这里只需「足够高」且两处一致）。
     private static let layoutHeight: CGFloat = 100_000
+    /// 行剔除的上下余量（一行日文 15pt 约 25pt 高，留一行余量避免边界行被误剔）。
+    private static let lineCull: CGFloat = 40
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // 视口裁剪。CT 的 frame 高度是 layoutHeight（「足够高」），draw 会把**全部**行都
+        // 送进上下文；答案区一旦封顶（NotchMetrics.maxAnswerHeight），超出的行若不裁掉
+        // 就会画到视图之外、越过卡片下缘继续渲染。
+        //
+        // 这条是实机截图发现的：布局数学全对（card 520x538 / y=94 / answerH=420），
+        // 单测也全绿——错在绘制没有边界。用 clipsToBounds 而不是在 draw 里 ctx.clip：
+        // 前者对图层树同样生效，后者只管当前这次 drawRect。
+        clipsToBounds = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     // MARK: - Text (diff → births)
 
@@ -178,6 +193,9 @@ final class StreamingAnswerView: NSView {
         for (li, line) in lines.enumerated() {
             let originX = origins[li].x
             let originY = origins[li].y - shift
+            // 视口外的行直接跳过：封顶后长答案每帧仍遍历全部行是纯浪费，
+            // 而流式期这条 draw 与出生动画、面板动画抢同一条 runloop。
+            if originY < -Self.lineCull || originY > bounds.height + Self.lineCull { continue }
             for run in CTLineGetGlyphRuns(line) as! [CTRun] {
                 let count = CTRunGetGlyphCount(run)
                 guard count > 0 else { continue }

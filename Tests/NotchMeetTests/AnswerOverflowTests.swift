@@ -94,4 +94,18 @@ final class AnswerOverflowTests: XCTestCase {
                           "\(path) 没有使用共享上限常量")
         }
     }
+
+    /// **绘制必须被视口裁剪**。
+    ///
+    /// CT 的 frame 高度是 layoutHeight（「足够高」），draw 会把全部行都送进上下文；
+    /// 答案区一旦封顶，超出的行若不裁掉就会画到视图之外、越过卡片下缘继续渲染。
+    /// 这条 bug 是实机截图发现的：布局数学全对、单测全绿，错在绘制没有边界。
+    ///
+    /// 注：越界本身无法用 `cacheDisplay` 复现（那条路径 AppKit 会自行按子视图 bounds
+    /// 裁剪，写出来的测试是空转的——去掉裁剪照样通过）。所以这里守的是开关本身，
+    /// 真正的证据是实机截图。
+    func testAnswerViewClipsToItsViewport() {
+        XCTAssertTrue(view(height: 120).clipsToBounds,
+                      "答案区必须裁剪到视口，否则封顶后的文字会画到卡片之外")
+    }
 }
