@@ -13,4 +13,8 @@ docs/
 # 本地开发：把私有库 clone 到 Sources/NotchMeet/Knowledge/ 再编译。
 # 大小写必须与磁盘一致：写错时本机靠 core.ignorecase=true 侥幸生效，
 # 在大小写敏感卷或 Linux CI 上 clone 后 `git add -A` 会把引擎推进公开仓库。
-Sources/NotchMeet/Knowledge/
+#
+# 结尾**不能**加斜杠：带斜杠只匹配目录，而 worktree 里这里通常是一条指向主
+# checkout 的符号链接（省得把引擎克隆两份），于是规则整条落空——`git add -A`
+# 会把那条写死本机绝对路径的链接暂存进公开仓，在别的机器上直接断链。
+Sources/NotchMeet/Knowledge
