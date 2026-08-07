@@ -40,6 +40,25 @@ enum ScreenShareGuard {
         window?.sharingType = sharingType
     }
 
+    // MARK: - 自检
+
+    /// 自检菜单里那行「画面共有ガード」的真话版：审计**本进程全部窗口**，而不是只看
+    /// 刘海面板一个（旧实现只查 NotchPanel，设置窗/引导窗/弹窗全都不在结论里——字面真
+    /// 语义假）。任何一个可见窗口的 sharingType 偏离策略值即不通过。
+    ///
+    /// 菜单窗口除外：它们有自己的零帧闸门（`menuWillOpen`），而这次审计恰恰是在菜单
+    /// 弹出过程中（`menuNeedsUpdate`）跑的——那一刻菜单窗口可能还没来得及被补设。
+    /// 不可见窗口除外：不上屏的窗口进不了共享帧，而设置窗关闭后是保活的隐藏窗口。
+    static func auditPasses() -> Bool {
+        unprotectedWindows(in: NSApp.windows).isEmpty
+    }
+
+    /// 审计核心（纯函数，供测试直接喂窗口列表）：返回会被屏幕共享拍进去的窗口。
+    static func unprotectedWindows(in windows: [NSWindow]) -> [NSWindow] {
+        let want = sharingType
+        return windows.filter { $0.isVisible && !isMenuWindow($0) && $0.sharingType != want }
+    }
+
     // MARK: - 菜单窗口
 
     /// 菜单窗口的正解闸门：`menuWillOpen` 时窗口**已创建、尚未上屏**（实测 CGWindow
@@ -62,6 +81,26 @@ enum ScreenShareGuard {
     }
 
     private static let menuDelegate = MenuGuardDelegate()
+
+    // MARK: - 兜底：AppKit 随手创建的窗口
+
+    /// 进程启动时装一次的总兜底：AppKit 会在我们看不见的地方创建窗口——实机确认的有
+    /// `TUINSWindow`（TextInputUI：长按选字、预测候选，输入时**会上屏**，且默认
+    /// sharing=readOnly），同类还有 tooltip、拖拽影像等。这些窗口没有构造点可挂，
+    /// 但任何窗口上屏前后必然经过 update/draw → `didUpdateNotification`，在那一刻补设。
+    /// 已排除的窗口只付一次指针比较，开销可忽略。
+    static func installWindowGuard() {
+        guard !windowGuardInstalled else { return }
+        windowGuardInstalled = true
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didUpdateNotification, object: nil, queue: nil
+        ) { note in
+            guard let w = note.object as? NSWindow, w.sharingType != sharingType else { return }
+            w.sharingType = sharingType
+        }
+    }
+
+    private static var windowGuardInstalled = false
 
     private static var installed = false
     private static var sweep: Timer?

@@ -34,6 +34,9 @@ struct OnboardingView: View {
     /// Persist (or clear) an API key. Empty value clears it.
     let saveKey: (_ name: String, _ value: String) -> Void
     let playDemo: (_ answer: String, _ intent: String, _ spokenJa: String) -> Void
+    /// 正在进行真实的面试录音（引导可从设置中途重开）。此时 demo 只显示、不出声——
+    /// 扬声器一响就会被自己的麦克风采进 Zoom/Meet；界面上给出 🔇 说明，免得被当成故障。
+    let isLiveCapture: () -> Bool
     let finish: (Bool, Int) -> Void
 
     @ObservedObject private var languageStore = AppLanguageStore.shared
@@ -507,6 +510,12 @@ struct OnboardingView: View {
                     Spacer(minLength: 0)
                 }
                 OBWaveform(active: demoPlaying).frame(height: 30)
+                if isLiveCapture() {
+                    Text(t.demoMutedLive)
+                        .font(.system(size: 11)).foregroundStyle(OB.ink.opacity(0.6))
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(16)
             .obSurface(cornerRadius: 14, fill: 0.24)
@@ -626,6 +635,8 @@ struct OnboardingView: View {
 
     private func pickFile() {
         let panel = NSOpenPanel()
+        // 引导可在面试中途重开；选稿的 Finder 列表（原稿文件名）不能进共享帧。
+        ScreenShareGuard.exclude(panel)
         var types: [UTType] = [.plainText, .text]
         if let md = UTType(filenameExtension: "md") { types.append(md) }
         if let markdown = UTType(filenameExtension: "markdown") { types.append(markdown) }

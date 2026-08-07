@@ -9,10 +9,6 @@ final class NotchController {
     var onSettings: ((NSPoint) -> Void)?
     var onToggleRecording: (() -> Void)?
 
-    /// Whether the live notch panel is excluded from screen capture/sharing (PLAN §3 S4).
-    /// Read back from the panel itself so the self-check reflects reality, not intent.
-    var screenShareGuarded: Bool { panel.sharingType == .none }
-
     private let panel: NotchPanel
     private var hovering = false
     private var settingsMenuOpen = false

@@ -2,16 +2,17 @@ import AppKit
 import SwiftUI
 
 /// First-launch onboarding. Seven steps — welcome → how-it-works → import script →
-/// system-audio permission → gift/activation → live demo → done. Hosted in an NSWindow:
-/// the app is an accessory (LSUIElement) with no Dock icon, so it can't take key focus
-/// as-is — flip to `.regular` while open, restore on close. The backdrop is a live Metal
-/// aurora (`AuroraBackground`); the demo drives the REAL notch and permission hits real TCC.
+/// system-audio permission → gift/activation → live demo → done. Hosted in an NSWindow.
+/// The app stays an `.accessory` the whole time: onboarding can be reopened MID-INTERVIEW
+/// (设置 → 关于 → 重新运行引导), and flipping to `.regular` would surface a Dock icon +
+/// ⌘Tab entry in the shared frame. `activate(ignoringOtherApps:)` is enough for an
+/// accessory app's window to take key focus. The backdrop is a live Metal aurora
+/// (`AuroraBackground`); the demo drives the REAL notch and permission hits real TCC.
 ///
 /// The step UI and localized copy live alongside this file: `Onboarding/OnboardingView.swift`
 /// and `Onboarding/OBStrings.swift`.
 final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
-    private let previousPolicy: NSApplication.ActivationPolicy
 
     /// Provide the user's already-saved script (markdown) to preload the editor + demo.
     var loadScript: (() -> String)?
@@ -27,13 +28,12 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     /// Play the demo on the real notch: stream `answer` under the `intent` tag, and speak
     /// the interviewer's question aloud (`spokenJa`, always Japanese).
     var onPlayDemo: ((_ answer: String, _ intent: String, _ spokenJa: String) -> Void)?
+    /// Whether a live interview recording is running right now — the demo then goes visual
+    /// only (no TTS through the speakers) and the step shows a 🔇 note.
+    var isLiveCapture: (() -> Bool)?
     /// Onboarding finished (or window closed): (permissionGranted, recognizedCount).
     var onFinish: ((Bool, Int) -> Void)?
 
-    override init() {
-        self.previousPolicy = NSApp.activationPolicy()
-        super.init()
-    }
 
     func show() {
         if let window {
@@ -48,6 +48,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             keyPresent: { [weak self] name in self?.keyPresent?(name) ?? false },
             saveKey: { [weak self] name, value in self?.onSaveKey?(name, value) },
             playDemo: { [weak self] answer, intent, spokenJa in self?.onPlayDemo?(answer, intent, spokenJa) },
+            isLiveCapture: { [weak self] in self?.isLiveCapture?() ?? false },
             finish: { [weak self] granted, count in
                 // Bind `self` strongly for the whole closure: `onFinish` drops AppController's
                 // only strong ref to this controller (`onboarding = nil`), which would otherwise
@@ -80,13 +81,11 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         w.delegate = self
         self.window = w
 
-        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(previousPolicy)
         window = nil
     }
 }
