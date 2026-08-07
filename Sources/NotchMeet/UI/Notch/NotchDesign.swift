@@ -83,6 +83,28 @@ enum NotchMetrics {
     /// 答案区下方的留白。控制器量高与视图布局**必须**都算上它，否则视图侧多减一次，
     /// 在问题占满两行时 available 会小于控制器已经按上限开好的面板，末行被削掉几像素。
     static let answerBottomInset: CGFloat = 12
+
+    /// 提示行（额度用完 → 去充值 / 输入充值码 / 稍后）占用的总高度，含它与正文的间距。
+    ///
+    /// 同上面两条一个道理，而且更要命：控制器量高时把它加进卡片，视图布局时就**必须**
+    /// 从答案区可用高度里减掉它。少减这一次，答案会一路铺到底部 inset，把整条操作行
+    /// 挤出卡片——额度用完时那三个按钮是用户此刻唯一的出口，裁掉等于把出口一起裁掉。
+    static func promptReserve(_ prompt: NotchPrompt?) -> CGFloat {
+        prompt == nil ? 0 : (NotchPromptRow.topGap + NotchPromptRow.height)
+    }
+
+    /// 答案区的最终高度：测量值先被 `maxAnswerHeight` 封顶（超出改为区内滚动），
+    /// 再夹进卡片的剩余高度——底部留白与提示行预留都已扣除。
+    ///
+    /// 布局直接调它，测试也直接调它：这条式子只有一份，`bodyTop + 返回值 + promptReserve`
+    /// 因此恒不超过卡片高度，操作行永远有地方站。
+    static func answerHeight(measured: CGFloat,
+                             cardHeight: CGFloat,
+                             bodyTop: CGFloat,
+                             prompt: NotchPrompt?) -> CGFloat {
+        let available = max(0, cardHeight - bodyTop - answerBottomInset - promptReserve(prompt))
+        return min(measured, maxAnswerHeight, available)
+    }
 }
 
 // MARK: - Small helpers
