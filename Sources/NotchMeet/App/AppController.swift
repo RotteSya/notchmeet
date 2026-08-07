@@ -42,11 +42,7 @@ final class AppController {
 
     func start() {
         Settings.cleanupLegacyKeys()
-        // 受管标记 UserDefaults → Keychain 指纹的一次性迁移。必须在 bootstrap 之前：
-        // 之后的一切计费判定（CreditPolicy）都依赖指纹登记。
-        ManagedKeyRegistry.migrateLegacyFlagsIfNeeded()
-        credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
-        observeCredit()
+        bootstrapCreditIfAllowed()
         // 菜单窗口是 AppKit 私有窗口，只能在它出现的那一刻补设 sharingType——在任何 UI
         // 之前装好这道闸门（PLAN §3 S4）。窗口总兜底同理：TUINSWindow（输入候选）、
         // tooltip 等 AppKit 自建窗口没有构造点，只能在首次绘制时补设。
@@ -75,6 +71,21 @@ final class AppController {
         } else if !Settings.onboarded {
             openOnboarding()
         }
+    }
+
+    /// 启动期的计费初始化——start() 里**唯一**允许碰 Keychain 的路径。
+    ///
+    /// demo 管线（FI_UI_DEMO 视觉 QA，承诺零 Keychain 访问）下整体跳过，缺一不可：
+    /// 迁移会把「已迁移」标记落进 UserDefaults（真实启动从此不再迁移，存量用户的
+    /// 受管标记永久丢失），bootstrap 会把迎新赠礼记进 RedemptionJournal（真实启动
+    /// 从此不再发放）——在 demo 的丢弃式内存账本上跑一遍，等于把这两样烧掉。
+    private func bootstrapCreditIfAllowed() {
+        guard AppConfig.keychainAllowed else { return }
+        // 受管标记 UserDefaults → Keychain 指纹的一次性迁移。必须在 bootstrap 之前：
+        // 之后的一切计费判定（CreditPolicy）都依赖指纹登记。
+        ManagedKeyRegistry.migrateLegacyFlagsIfNeeded()
+        credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
+        observeCredit()
     }
 
     /// A menu-bar-only app has no Edit menu, so ⌘X/⌘C/⌘V key-equivalents aren't

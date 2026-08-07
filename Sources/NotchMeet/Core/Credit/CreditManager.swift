@@ -37,13 +37,13 @@ final class CreditManager: ObservableObject, ManagedFingerprintStore {
     /// **仅 DEBUG 构建生效**：在 release 里开放它等于「一行环境变量换无限额度」，
     /// 且照常使用出厂内置的受管 Key。门禁写法对齐 `Secrets.FI_NO_KEYCHAIN`。
     static let shared: CreditManager = {
+        final class Mem: CreditStore {
+            var d: Data?
+            func loadLedger() -> Data? { d }
+            @discardableResult func saveLedger(_ x: Data) -> Bool { d = x; return true }
+        }
         #if DEBUG
         if let spec = ProcessInfo.processInfo.environment["FI_CREDIT_EPHEMERAL"] {
-            final class Mem: CreditStore {
-                var d: Data?
-                func loadLedger() -> Data? { d }
-                @discardableResult func saveLedger(_ x: Data) -> Bool { d = x; return true }
-            }
             let ledger = CreditLedger(store: Mem())
             let parts = spec.split(separator: ":").compactMap { Int($0) }
             if parts.count == 2 {
@@ -54,6 +54,13 @@ final class CreditManager: ObservableObject, ManagedFingerprintStore {
             return CreditManager(ledger: ledger)
         }
         #endif
+        // demo 管线承诺全程零 Keychain 访问：账本换成内存空账，绝不读写
+        // com.notchmeet.credit。demo 不跑真管线、不计量，空账本没有任何计费语义，
+        // 因此不必像 FI_CREDIT_EPHEMERAL（可预置余额）一样限 DEBUG。
+        if !AppConfig.keychainAllowed {
+            NSLog("[credit] demo pipeline — in-memory ledger, keychain untouched")
+            return CreditManager(ledger: CreditLedger(store: Mem()))
+        }
         return CreditManager()
     }()
 
