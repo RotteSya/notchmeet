@@ -21,6 +21,9 @@ enum Secrets {
     }
 
     static func get(_ key: String) -> String? {
+        // demo 管线承诺全程零 Keychain 访问（AppConfig.keychainAllowed）——启动期
+        // 与 demo 期间的任何读取一律视为无 Key，绝不触发 ACL 密码弹框。
+        guard AppConfig.keychainAllowed else { return nil }
         #if DEBUG
         // 视觉 QA：重新打包的二进制读 Keychain 会触发 ACL 密码弹框（签名不同）。
         // FI_NO_KEYCHAIN=1 直接视为无 Key，QA 流程靠 FI_PROVISIONING 注入服务。
