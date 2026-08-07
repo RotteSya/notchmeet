@@ -41,6 +41,16 @@ final class AppleSpeechSttClient: NSObject, SttClient {
         super.init()
     }
 
+    /// 面试中途热切换（审计 R1）的前置校验：只有「语音识别权限已授予 + 端侧 ja-JP
+    /// 资产已就绪」才允许切换——中途弹权限框或触发几百 MB 的模型下载，比慢终稿
+    /// 糟糕得多。不满足就留在 Deepgram（慢但在工作）。
+    static func isReadyForHotSwap(localeID: String = "ja-JP") -> Bool {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
+              let rec = SFSpeechRecognizer(locale: Locale(identifier: localeID)),
+              rec.isAvailable, rec.supportsOnDeviceRecognition else { return false }
+        return true
+    }
+
     /// 产品固定 ja-JP（见 spec 非目标）；保留以满足协议。
     func setLanguage(_ lang: String) {}
 

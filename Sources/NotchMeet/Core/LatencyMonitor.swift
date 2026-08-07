@@ -21,6 +21,11 @@ final class LatencyMonitor {
     /// Supplies the last-voiced uptime (ns) from the audio path; 0/unknown → use endpoint.
     var voicedClock: (() -> UInt64)?
 
+    /// 每轮的 STT 交付耗时（ms，最后一个音素 → 最后终稿到达），turnStart 时上报。
+    /// 供审计 R1 的慢终稿探测（SttHealthTracker → 热切换端侧引擎）。0（无音频路径 /
+    /// 时间戳失真而退化）不上报——探测器只该吃真实测量值。
+    var onSttFinalDelay: ((Double) -> Void)?
+
     private struct Turn {
         var t0: UInt64
         var endpoint: UInt64
@@ -50,6 +55,8 @@ final class LatencyMonitor {
         // 发生）或晚于提交都不是有意义的拆分点，此时把整段算作 STT 交付。
         let final = (sttFinalNs >= t0 && sttFinalNs <= endpoint) ? sttFinalNs : endpoint
         turns[epoch] = Turn(t0: t0, endpoint: endpoint, sttFinal: final, kind: nil, first: nil)
+        let sttLag = ms(t0, final)
+        if sttLag > 0 { onSttFinalDelay?(sttLag) }
     }
 
     func markFirstReadable(epoch: Int, kind: TurnKind) {

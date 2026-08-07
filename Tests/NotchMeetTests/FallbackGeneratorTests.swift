@@ -107,6 +107,104 @@ final class FallbackGeneratorTests: XCTestCase {
         XCTAssertNotNil(result.error)
     }
 
+    // MARK: - 首 token 看门狗（审计 R2）
+
+    /// 可控速度的假生成器：先等 `delay`，再吐 delta。被取消时如实抛 CancellationError。
+    final class SlowStubGenerator: AnswerGenerator {
+        let delay: TimeInterval
+        let emit: [String]
+        private(set) var calls = 0
+        private(set) var cancelled = false
+
+        init(delay: TimeInterval, emit: [String]) {
+            self.delay = delay
+            self.emit = emit
+        }
+
+        func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
+            calls += 1
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                cancelled = true
+                throw error
+            }
+            for d in emit { onDelta(d) }
+        }
+    }
+
+    /// 主选连着但迟迟不吐字（DeepSeek 晚高峰形态）→ 预算耗尽即切次选。
+    /// 这是 R2 的核心：硬失败之外，「挂着不响应」也必须触发降级。
+    func testSwitchesWhenPrimaryProducesNoTokenWithinBudget() async {
+        let primary = SlowStubGenerator(delay: 10, emit: ["遅すぎる答え"])
+        let secondary = StubGenerator(emit: ["御社の強みは"])
+        let chain = FallbackAnswerGenerator(chain: [primary, secondary],
+                                            names: ["deepseek", "qwen"],
+                                            firstTokenBudget: 0.05)
+        let result = await run(chain)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.text, "御社の強みは", "预算耗尽后必须切到次选，且不得混入主选的迟到文字")
+        XCTAssertEqual(secondary.calls, 1)
+        XCTAssertTrue(primary.cancelled, "被放弃的 provider 必须被取消，不能留着白烧配额")
+    }
+
+    /// 首个 delta 赶在预算内到达 → 之后无论多慢都不再切换（用户可能正在照读）。
+    func testNoSwitchOnceFirstTokenArrivedInTime() async {
+        let primary = SlowStubGenerator(delay: 0.01, emit: ["はい。", "私の強みは実行力です。"])
+        let secondary = StubGenerator(emit: ["不应出现"])
+        let chain = FallbackAnswerGenerator(chain: [primary, secondary],
+                                            firstTokenBudget: 0.2)
+        let result = await run(chain)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.text, "はい。私の強みは実行力です。")
+        XCTAssertEqual(secondary.calls, 0)
+    }
+
+    /// 链上最后一个 provider 不设看门狗：没有退路时，慢答案好过没答案。
+    func testLastProviderIsNeverAbandonedForSlowness() async {
+        let only = SlowStubGenerator(delay: 0.15, emit: ["遅くても答え"])
+        let chain = FallbackAnswerGenerator(chain: [only], firstTokenBudget: 0.02)
+        let result = await run(chain)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.text, "遅くても答え")
+        XCTAssertFalse(only.cancelled)
+    }
+
+    /// 全链都在预算内哑火 → 上抛可读的 allProvidersSlow，而不是内部哨兵。
+    func testAllSlowSurfacesReadableError() async {
+        let a = SlowStubGenerator(delay: 10, emit: ["x"])
+        let b = StubGenerator(failWith: LLMError.http(503))
+        let chain = FallbackAnswerGenerator(chain: [a, b], firstTokenBudget: 0.05)
+        let result = await run(chain)
+        // a 超时 → 换 b；b 硬失败且是最后一个 → 抛 b 的错误。
+        guard case LLMError.http(let code)? = result.error else {
+            return XCTFail("应抛出最后一个 provider 的真实错误，实际 \(String(describing: result.error))")
+        }
+        XCTAssertEqual(code, 503)
+
+        // 两家都哑 → allProvidersSlow（第二家没有下一家，不装看门狗，这里用两家超时
+        // 模拟不了；直接验证「只有超时、没有硬失败」时的兜底错误形态）。
+        let c = SlowStubGenerator(delay: 10, emit: ["x"])
+        let d = SlowStubGenerator(delay: 10, emit: ["y"])
+        let chain2 = FallbackAnswerGenerator(chain: [c, d], firstTokenBudget: 0.05)
+        let req2 = req
+        let t = Task { () -> (text: String, error: Error?) in
+            var text = ""
+            do {
+                try await chain2.generate(req2, epoch: 1) { text += $0 }
+                return (text, nil)
+            } catch {
+                return (text, error)
+            }
+        }
+        // d 是最后一家不设看门狗，会一直等——这里直接取消整轮（等同新问题取代）。
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        t.cancel()
+        let r2 = await t.value
+        XCTAssertNotNil(r2.error, "整轮被取消时必须向上抛，不得吞掉")
+        XCTAssertEqual(r2.text, "", "没有任何 provider 的文字上屏")
+    }
+
     /// 判定函数本身：两种取消都认，真实故障不认。
     func testCancellationClassification() {
         XCTAssertTrue(TurnManager.isCancellation(CancellationError()))

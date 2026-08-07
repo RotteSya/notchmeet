@@ -29,6 +29,17 @@ final class NotchView: NSView {
     // Expanded card.
     private let expandedContent = FlippedContainer()
     private let headerStatus = NotchStatusMark()
+    /// 首排的产品语义：宝石右侧一枚安静的字标。首排是刘海横带，只放固定短元件——
+    /// 字标是定宽拉丁字，连同宝石+REC 都落在开孔左侧的可见带内（≈143pt < 167pt）。
+    private let brandLabel: NSTextField = {
+        let f = NotchView.makeLabel(size: 11, weight: .semibold, color: NotchPalette.secondary)
+        f.attributedStringValue = NSAttributedString(string: "NotchMeet", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NotchPalette.secondary,
+            .kern: 0.5,
+        ])
+        return f
+    }()
     private let headerREC = NotchView.makeRECLabel()
     private let statusText = NotchView.makeLabel(size: 11.5, weight: .semibold, color: NotchPalette.primary)
     private lazy var recordButton = NotchControlButton(
@@ -115,7 +126,7 @@ final class NotchView: NSView {
         addSubview(collapsedBar)
 
         promptRow.onAction = { [weak self] action in self?.onPromptAction(action) }
-        [headerStatus, headerREC, statusText, creditChip, recordButton, settingsButton,
+        [headerStatus, brandLabel, headerREC, statusText, creditChip, recordButton, settingsButton,
          heardLabel, heardValue, intentChip, answerLabel, answerStream,
          promptRow].forEach { expandedContent.addSubview($0) }
         addSubview(expandedContent)
@@ -153,8 +164,11 @@ final class NotchView: NSView {
         let s = AppStrings.current
 
         let activity = model.answer.count / 12
+        // 转写断连重连中：宝石换成琥珀「!」（审计 R4，决策在 NotchPresentation.markStatus）。
+        let displayStatus = NotchPresentation.markStatus(status: model.status,
+                                                         message: model.message)
         for mark in [collapsedStatus, headerStatus] {
-            mark.status = model.status
+            mark.status = displayStatus
             mark.recording = model.recording
             mark.activity = activity
         }
@@ -163,11 +177,14 @@ final class NotchView: NSView {
         collapsedREC.isHidden = !model.recording
         headerREC.isHidden = !model.recording
 
-        // 状态文字：交叉淡化换字，不生硬跳变。回看态用琥珀色顶掉常规状态——用户瞟一眼
-        // 就知道「这是之前的回答，不是现在该说的话」；只靠正文没有任何区别是不可接受的。
-        statusText.textColor = model.review == nil ? NotchPalette.primary : NotchPalette.warning
-        let newStatus = model.review.map { s.notchReviewing(position: $0.position, count: $0.count) }
-            ?? s.notchStatus(model.message)
+        // 状态文字：交叉淡化换字，不生硬跳变。回看态与「可能不完整」警告用琥珀色顶掉
+        // 常规状态（决策集中在 NotchPresentation.headerStatus，可测）——用户瞟一眼就知道
+        // 「这是之前的回答」或「这段回答可能不完整」；只靠正文没有任何区别是不可接受的。
+        let header = NotchPresentation.headerStatus(answer: model.answer, message: model.message,
+                                                    errorDetail: model.errorDetail,
+                                                    review: model.review, strings: s)
+        statusText.textColor = header.warning ? NotchPalette.warning : NotchPalette.primary
+        let newStatus = header.text
         if newStatus != displayedStatusText && newStatus != pendingStatusText {
             pendingStatusText = newStatus
             if reduceMotion || displayedStatusText.isEmpty {
@@ -312,31 +329,40 @@ final class NotchView: NSView {
         recordButton.frame = CGRect(x: recordX, y: rowCY - 12, width: 28, height: 24)
 
         // 额度胶囊：紧贴录音键左侧。计量中常显，安静不抢戏；额度紧张时自己变色。
-        var leftLimit = recordX
         if !creditChip.isHidden {
             let chipSize = creditChip.intrinsicContentSize
             let chipX = recordX - 8 - chipSize.width
             creditChip.frame = CGRect(x: chipX, y: rowCY - chipSize.height / 2,
                                       width: chipSize.width, height: chipSize.height)
-            leftLimit = chipX
         }
 
+        // 首横带（0…33pt）与物理刘海开孔重叠，卡片中央的像素会被硬件挡住（截图
+        // 看不出来——帧缓冲里它们还在）。这一带只放固定短元件：宝石+REC 靠左、
+        // 额度/录音/设置靠右，全部位于开孔两侧的可见带内。变长的状态文字不进来。
         headerStatus.frame = CGRect(x: 18, y: rowCY - 8, width: 16, height: 16)
         var cursor: CGFloat = 18 + 16 + 8
+        brandLabel.sizeToFit()
+        let brandSize = brandLabel.frame.size
+        brandLabel.frame = CGRect(x: cursor, y: rowCY - brandSize.height / 2,
+                                  width: brandSize.width, height: brandSize.height)
+        cursor += brandSize.width + 8
         if !headerREC.isHidden {
             headerREC.sizeToFit()
             let recSize = headerREC.frame.size
-            headerREC.frame = CGRect(x: cursor, y: rowCY - recSize.height / 2, width: recSize.width, height: recSize.height)
-            cursor += recSize.width + 8
+            headerREC.frame = CGRect(x: cursor, y: rowCY - recSize.height / 2,
+                                     width: recSize.width, height: recSize.height)
         }
-        let textW = max(0, leftLimit - 12 - cursor)
-        let textH = statusText.intrinsicContentSize.height
-        statusText.frame = CGRect(x: cursor, y: rowCY - textH / 2, width: textW, height: textH)
-
         // Body.
         let contentX: CGFloat = 20
         let contentW = size.width - 40
         var y = headerTop + rowH + 8 + (model.answer.isEmpty ? 0 : 3)
+
+        // 状态文字 = 正文首行，落在刘海下方全宽渲染（NotchMetrics.statusRowReserve 同源）。
+        // 警告（可能不完整 / 正在重连 / 回看角标）都走这一行，绝不再被开孔吞掉。
+        let statusH = statusText.intrinsicContentSize.height
+        statusText.frame = CGRect(x: contentX, y: y + (16 - statusH) / 2,
+                                  width: contentW, height: statusH)
+        y += NotchMetrics.statusRowReserve
 
         // 新一轮入场：问题/意图行淡入 + 从下方 6pt 浮定（答案由逐字诞生自带入场）。
         let intro = max(0, min(1, introTween.value))

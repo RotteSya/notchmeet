@@ -76,4 +76,37 @@ enum NotchPresentation {
         if message == .sttError, let errorDetail { return errorDetail }  // SttError.localizedDescription is a full localized sentence
         return strings.runtimeMessage(message)
     }
+
+    /// 状态宝石的显示状态（审计 R4）：转写断连重连中以 .error（琥珀「!」）顶掉真实
+    /// status。折叠态唯一的可视元素就是这颗宝石——不动它的话，收起的刘海在整个 30s
+    /// 重连预算里与正常聆听毫无区别。只影响显示，真实 status 仍驱动控制器状态机。
+    static func markStatus(status: AnswerModel.Status, message: RuntimeMessage) -> AnswerModel.Status {
+        message == .sttReconnecting ? .error : status
+    }
+
+    /// 头部状态行的唯一决策点（审计 R3）。
+    ///
+    /// `text` 的契约是「answer 非空即原样返回」，于是流已提交后中途断开时，
+    /// TurnManager 写入的 `errorDetail`（「这段回答可能不完整」）曾经**永远**渲染
+    /// 不出来——正文被答案占着，状态行又只看 message（断流收尾时是 .completed
+    /// 「可直接作答」）。半截答案标着「可直接作答」，候选人会照着念到一半哑场。
+    /// 现在：answer 非空且带 errorDetail → 状态行以警告色显示警告本身。
+    /// 回看角标仍然最优先——「这是旧答案」比「可能不完整」更致命。
+    static func headerStatus(answer: String,
+                             message: RuntimeMessage,
+                             errorDetail: String?,
+                             review: AnswerModel.ReviewBadge?,
+                             strings: AppStrings) -> (text: String, warning: Bool) {
+        if let review {
+            return (strings.notchReviewing(position: review.position, count: review.count), true)
+        }
+        if let errorDetail, !answer.isEmpty {
+            return (errorDetail, true)
+        }
+        // 重连中状态行与宝石同为警告色（R4）：两个元件说同一件事，不能一琥珀一白。
+        if message == .sttReconnecting {
+            return (strings.notchStatus(message), true)
+        }
+        return (strings.notchStatus(message), false)
+    }
 }

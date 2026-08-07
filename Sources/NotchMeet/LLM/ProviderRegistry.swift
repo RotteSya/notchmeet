@@ -47,8 +47,10 @@ enum ProviderRegistry {
         guard !generators.isEmpty else {
             // Keychain 在 resolve 与 build 之间被清空（或 ACL 被拒）也会落到这里——
             // 旧实现在这一步 `!` 强制解包，等于面试中崩溃。
-            NSLog("[provider] no usable LLM key — using mock generator")
-            return MockAnswerGenerator()
+            // 注意这里**不是** MockAnswerGenerator（审计 R6）：mock 的流利假答案在
+            // 刘海上与真答案毫无区别，真实会话里必须显式报「没有可用的 API 密钥」。
+            NSLog("[provider] no usable LLM key — live turns will surface missingKey")
+            return UnconfiguredAnswerGenerator()
         }
         NSLog("[provider] LLM = %@ (+%d fallback)", names[0], generators.count - 1)
         guard generators.count > 1 else { return generators[0] }

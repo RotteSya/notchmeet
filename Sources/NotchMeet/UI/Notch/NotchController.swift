@@ -21,6 +21,7 @@ final class NotchController {
     private var resizeScheduled = false
     private var lastHandledStatus: AnswerModel.Status?
     private var lastHandledPrompt: NotchPrompt?
+    private var lastHandledMessage: RuntimeMessage?
     private var cancellables = Set<AnyCancellable>()
 
     private let expandedWidth: CGFloat = 520
@@ -133,7 +134,9 @@ final class NotchController {
         // 进入问答后预留「问题(标签+最多2行,38) + 意图(18)」，使答案到达不再阶跃；
         // 纯 hover/ready 态（尚未进入问答）用紧凑 chrome(54)，下半不留空。
         // 与 NotchView.layoutExpanded 同源：那边会在可用高度里减掉同一个 inset。
+        // 状态行已从刘海横带移到正文首行（物理开孔遮挡），高度同源加在这里。
         let chrome: CGFloat = (reservesContentRows ? (62 + 38 + 18) : 54)
+            + NotchMetrics.statusRowReserve
             + NotchMetrics.answerBottomInset
         // 提示的操作行（去充值 / 输入充值码 / 稍后）也要占高度，否则按钮会被卡片裁掉。
         // 与 NotchView.layoutExpanded 减掉的是同一个函数。
@@ -246,6 +249,25 @@ final class NotchController {
                 if !hovering { scheduleCollapse(after: 12) }
             }
         }
+        // 转写断连（审计 R4）：面试官此刻说的话可能没被听到，这是录音中最高优先级的
+        // 事实，必须立刻可见——展开刘海显示「正在重连…（这段话可能没被听到）」；被
+        // ⌘⇧Space 隐藏着也要重现（与额度提示同一理由：不重现就真的什么都看不到）。
+        // 恢复后若回到聆听态则安静收起；答案还在屏上（status 仍 presenting）就不动。
+        if model.message != lastHandledMessage {
+            let previous = lastHandledMessage
+            lastHandledMessage = model.message
+            if model.message == .sttReconnecting {
+                if !visible { visible = true; panel.orderFrontRegardless() }
+                collapseWork?.cancel()
+                setExpanded(true)
+            } else if previous == .sttReconnecting, !hovering {
+                switch model.status {
+                case .listening, .ready: scheduleCollapse(after: 4)
+                default: break
+                }
+            }
+        }
+
         // 状态分支之后：提示到达时必须**盖过**上面刚排的自动收起。提示是用户此刻唯一的
         // 出口（额度用完 → 去充值 / 输入充值码），收起卡片等于把出口一起收走；刘海若被
         // ⌘⇧Space 隐藏着，也要重新出现——否则弹窗撤掉后就真的什么都看不到了。
