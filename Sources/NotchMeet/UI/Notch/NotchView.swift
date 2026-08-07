@@ -29,6 +29,17 @@ final class NotchView: NSView {
     // Expanded card.
     private let expandedContent = FlippedContainer()
     private let headerStatus = NotchStatusMark()
+    /// 首排的产品语义：宝石右侧一枚安静的字标。首排是刘海横带，只放固定短元件——
+    /// 字标是定宽拉丁字，连同宝石+REC 都落在开孔左侧的可见带内（≈143pt < 167pt）。
+    private let brandLabel: NSTextField = {
+        let f = NotchView.makeLabel(size: 11, weight: .semibold, color: NotchPalette.secondary)
+        f.attributedStringValue = NSAttributedString(string: "NotchMeet", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NotchPalette.secondary,
+            .kern: 0.5,
+        ])
+        return f
+    }()
     private let headerREC = NotchView.makeRECLabel()
     private let statusText = NotchView.makeLabel(size: 11.5, weight: .semibold, color: NotchPalette.primary)
     private lazy var recordButton = NotchControlButton(
@@ -115,7 +126,7 @@ final class NotchView: NSView {
         addSubview(collapsedBar)
 
         promptRow.onAction = { [weak self] action in self?.onPromptAction(action) }
-        [headerStatus, headerREC, statusText, creditChip, recordButton, settingsButton,
+        [headerStatus, brandLabel, headerREC, statusText, creditChip, recordButton, settingsButton,
          heardLabel, heardValue, intentChip, answerLabel, answerStream,
          promptRow].forEach { expandedContent.addSubview($0) }
         addSubview(expandedContent)
@@ -329,10 +340,16 @@ final class NotchView: NSView {
         // 看不出来——帧缓冲里它们还在）。这一带只放固定短元件：宝石+REC 靠左、
         // 额度/录音/设置靠右，全部位于开孔两侧的可见带内。变长的状态文字不进来。
         headerStatus.frame = CGRect(x: 18, y: rowCY - 8, width: 16, height: 16)
+        var cursor: CGFloat = 18 + 16 + 8
+        brandLabel.sizeToFit()
+        let brandSize = brandLabel.frame.size
+        brandLabel.frame = CGRect(x: cursor, y: rowCY - brandSize.height / 2,
+                                  width: brandSize.width, height: brandSize.height)
+        cursor += brandSize.width + 8
         if !headerREC.isHidden {
             headerREC.sizeToFit()
             let recSize = headerREC.frame.size
-            headerREC.frame = CGRect(x: 18 + 16 + 8, y: rowCY - recSize.height / 2,
+            headerREC.frame = CGRect(x: cursor, y: rowCY - recSize.height / 2,
                                      width: recSize.width, height: recSize.height)
         }
         // Body.
