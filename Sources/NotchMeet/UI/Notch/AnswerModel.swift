@@ -103,6 +103,10 @@ enum NotchPresentation {
         if let errorDetail, !answer.isEmpty {
             return (errorDetail, true)
         }
+        // 重连中状态行与宝石同为警告色（R4）：两个元件说同一件事，不能一琥珀一白。
+        if message == .sttReconnecting {
+            return (strings.notchStatus(message), true)
+        }
         return (strings.notchStatus(message), false)
     }
 }

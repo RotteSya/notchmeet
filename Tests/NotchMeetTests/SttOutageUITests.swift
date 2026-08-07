@@ -22,6 +22,15 @@ final class SttOutageUITests: XCTestCase {
                        .presenting)
     }
 
+    /// 重连中的状态行必须与宝石同为警告色（两个元件说同一件事）。
+    func testHeaderStatusIsWarningWhileReconnecting() {
+        let s = AppStrings(language: .zh)
+        let h = NotchPresentation.headerStatus(answer: "答案还在屏上", message: .sttReconnecting,
+                                               errorDetail: nil, review: nil, strings: s)
+        XCTAssertEqual(h.text, s.notchStatus(.sttReconnecting))
+        XCTAssertTrue(h.warning)
+    }
+
     // MARK: R5 — 断连快照 / 重连还原
 
     /// 核心案例：展示答案时断连 → 重连成功后还原到展示态，答案不清。

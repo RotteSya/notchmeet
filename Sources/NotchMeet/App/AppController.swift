@@ -886,6 +886,17 @@ final class AppController {
         case "error":
             model.recording = true; model.status = .error; model.message = .generationError
             model.errorDetail = "接続を確認してください。"
+        case "incomplete":
+            // R3：流已提交后断开——答案留在屏上，状态行必须以琥珀色显示
+            // 「这段回答可能不完整」，而不是「可直接作答」。
+            model.recording = true; model.status = .presenting; model.message = .completed
+            model.intentLabel = "自己紹介"; model.answer = String(answer.prefix(120))
+            model.errorDetail = AppStrings.current.answerMayBeIncomplete
+        case "reconnecting":
+            // R4/R5：展示答案途中转写断连——正文保留（重连成功也不清），状态行
+            // 显示「正在重连…」，宝石转琥珀「!」（折叠态同一颗宝石）。
+            model.recording = true; model.status = .presenting; model.message = .sttReconnecting
+            model.intentLabel = "自己紹介"; model.answer = answer
         case "credit-exhausted":
             // 额度用完后的刘海内提示（原先是抢焦点的 NSAlert）。录音已停，但上一轮的答案
             // 还留在屏上——这既是真实场景，也是操作行最容易被顶出卡片的那一版布局：
@@ -897,7 +908,7 @@ final class AppController {
             model.recording = false; model.status = .ready; model.message = .ready
         }
         if ["thinking", "streaming", "presenting", "overflow", "error",
-            "credit-exhausted"].contains(fixture) {
+            "incomplete", "reconnecting", "credit-exhausted"].contains(fixture) {
             model.question = "学生時代に力を入れたことを教えてください。"
         }
         // 视觉 QA：FI_UI_CREDIT=<剩余秒数> 在任意 fixture 上叠加额度胶囊
