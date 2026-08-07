@@ -318,31 +318,34 @@ final class NotchView: NSView {
         recordButton.frame = CGRect(x: recordX, y: rowCY - 12, width: 28, height: 24)
 
         // 额度胶囊：紧贴录音键左侧。计量中常显，安静不抢戏；额度紧张时自己变色。
-        var leftLimit = recordX
         if !creditChip.isHidden {
             let chipSize = creditChip.intrinsicContentSize
             let chipX = recordX - 8 - chipSize.width
             creditChip.frame = CGRect(x: chipX, y: rowCY - chipSize.height / 2,
                                       width: chipSize.width, height: chipSize.height)
-            leftLimit = chipX
         }
 
+        // 首横带（0…33pt）与物理刘海开孔重叠，卡片中央的像素会被硬件挡住（截图
+        // 看不出来——帧缓冲里它们还在）。这一带只放固定短元件：宝石+REC 靠左、
+        // 额度/录音/设置靠右，全部位于开孔两侧的可见带内。变长的状态文字不进来。
         headerStatus.frame = CGRect(x: 18, y: rowCY - 8, width: 16, height: 16)
-        var cursor: CGFloat = 18 + 16 + 8
         if !headerREC.isHidden {
             headerREC.sizeToFit()
             let recSize = headerREC.frame.size
-            headerREC.frame = CGRect(x: cursor, y: rowCY - recSize.height / 2, width: recSize.width, height: recSize.height)
-            cursor += recSize.width + 8
+            headerREC.frame = CGRect(x: 18 + 16 + 8, y: rowCY - recSize.height / 2,
+                                     width: recSize.width, height: recSize.height)
         }
-        let textW = max(0, leftLimit - 12 - cursor)
-        let textH = statusText.intrinsicContentSize.height
-        statusText.frame = CGRect(x: cursor, y: rowCY - textH / 2, width: textW, height: textH)
-
         // Body.
         let contentX: CGFloat = 20
         let contentW = size.width - 40
         var y = headerTop + rowH + 8 + (model.answer.isEmpty ? 0 : 3)
+
+        // 状态文字 = 正文首行，落在刘海下方全宽渲染（NotchMetrics.statusRowReserve 同源）。
+        // 警告（可能不完整 / 正在重连 / 回看角标）都走这一行，绝不再被开孔吞掉。
+        let statusH = statusText.intrinsicContentSize.height
+        statusText.frame = CGRect(x: contentX, y: y + (16 - statusH) / 2,
+                                  width: contentW, height: statusH)
+        y += NotchMetrics.statusRowReserve
 
         // 新一轮入场：问题/意图行淡入 + 从下方 6pt 浮定（答案由逐字诞生自带入场）。
         let intro = max(0, min(1, introTween.value))

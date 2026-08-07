@@ -80,6 +80,16 @@ enum NotchMetrics {
     /// 用同一个上限，否则又回到「量出来的高度不等于画出来的高度」那类错位。
     static let maxAnswerHeight: CGFloat = 420
 
+    /// 状态文字行（正文首行）占用的高度：行高 16 + 与下一行的间距 8。
+    ///
+    /// 展开卡片的第一横带（0…33pt）与**物理刘海开孔**重叠：卡片中央约一个开孔宽的
+    /// 像素会被硬件直接挡住，而 `screencapture` 拍的是帧缓冲，被挡的像素照样在图里
+    /// ——视觉 QA 完全看不出来。所以那一带只放固定短元件（状态宝石+REC 靠左、
+    /// 额度/录音/设置靠右，都在开孔两侧的可见带内）；**变长文字一律不进这一带**：
+    /// 状态文字（含「可能不完整」「正在重连」这类警告）改放刘海下方的正文首行。
+    /// 量高（NotchController.expandedHeight）与排版（NotchView.layoutExpanded）共用本常量。
+    static let statusRowReserve: CGFloat = 24
+
     /// 答案区下方的留白。控制器量高与视图布局**必须**都算上它，否则视图侧多减一次，
     /// 在问题占满两行时 available 会小于控制器已经按上限开好的面板，末行被削掉几像素。
     static let answerBottomInset: CGFloat = 12

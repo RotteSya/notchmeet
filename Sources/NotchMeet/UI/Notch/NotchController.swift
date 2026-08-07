@@ -134,7 +134,9 @@ final class NotchController {
         // 进入问答后预留「问题(标签+最多2行,38) + 意图(18)」，使答案到达不再阶跃；
         // 纯 hover/ready 态（尚未进入问答）用紧凑 chrome(54)，下半不留空。
         // 与 NotchView.layoutExpanded 同源：那边会在可用高度里减掉同一个 inset。
+        // 状态行已从刘海横带移到正文首行（物理开孔遮挡），高度同源加在这里。
         let chrome: CGFloat = (reservesContentRows ? (62 + 38 + 18) : 54)
+            + NotchMetrics.statusRowReserve
             + NotchMetrics.answerBottomInset
         // 提示的操作行（去充值 / 输入充值码 / 稍后）也要占高度，否则按钮会被卡片裁掉。
         // 与 NotchView.layoutExpanded 减掉的是同一个函数。
