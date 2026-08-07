@@ -82,16 +82,25 @@ final class AnswerOverflowTests: XCTestCase {
         XCTAssertEqual(v.scrollOffset, 0)
     }
 
-    /// 量高与渲染必须用**同一个**上限常量。两处各写各的，就会重现
+    /// 量高与渲染必须用**同一个**上限。两处各写各的，就会重现
     /// 「面板按 A 高度开、文字按 B 高度排」那类错位——这正是本项要修的病根。
+    ///
+    /// 两个合法出口：直接引用 `NotchMetrics.maxAnswerHeight`（控制器量高），或调用
+    /// 把封顶与夹取一起封好的 `NotchMetrics.answerHeight(...)`（视图布局）。后者更强——
+    /// 式子只有一份，连提示行的预留都算在里面。
+    /// 用正则而非 `contains`：换行链式调用、点号两侧空格这类无关格式改动不该让它变红。
+    /// 源码扫描天然只能守到「名字有没有出现」，真正的算术由
+    /// `NotchPromptTests` 里那两条直接调 `NotchMetrics.answerHeight(...)` 的用例把关。
     func testHeightCapIsSharedBetweenMeasurementAndLayout() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let shared = try NSRegularExpression(
+            pattern: #"NotchMetrics\s*\.\s*(maxAnswerHeight|answerHeight\s*\()"#)
         for path in ["Sources/NotchMeet/UI/Notch/NotchController.swift",
                      "Sources/NotchMeet/UI/Notch/NotchView.swift"] {
             let text = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-            XCTAssertTrue(text.contains("NotchMetrics.maxAnswerHeight"),
-                          "\(path) 没有使用共享上限常量")
+            let hit = shared.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+            XCTAssertNotNil(hit, "\(path) 既没引用共享上限常量，也没走 NotchMetrics.answerHeight")
         }
     }
 

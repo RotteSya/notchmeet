@@ -574,18 +574,32 @@ struct AppStrings {
     func creditLowAlert(_ minutes: Int) -> String {
         pick("剩余额度不足 \(minutes) 分钟", "残り時間が\(minutes)分を切りました")
     }
-    var creditExhaustedTitle: String { pick("额度已用完", "残高がなくなりました") }
-    var creditExhaustedBody: String {
-        pick("本场录音已停止。你的准备内容都还在——充值后即可继续使用。也可以在设置里填入自己的服务密钥（不消耗额度）。",
-             "録音を停止しました。準備した内容はそのまま残っています。チャージするとすぐに再開できます。設定でご自身のサービスキーを使うこともできます（残高は消費しません）。")
-    }
-    var creditCannotStartTitle: String { pick("额度不足，无法开始", "残高が足りないため開始できません") }
-    var creditCannotStartBody: String {
-        pick("当前剩余额度为 0。充值后即可开始录音；如果你有自己的服务密钥，也可以在设置中填入（不消耗额度）。",
-             "残り時間が0のため録音を開始できません。チャージすればすぐに開始できます。ご自身のサービスキーをお持ちの場合は設定から入力してください（残高は消費しません）。")
-    }
     var creditTopUpAction: String { pick("去充值", "チャージする") }
     var creditEnterCodeAction: String { pick("输入充值码…", "コードを入力…") }
+    var creditLaterAction: String { pick("稍后", "後で") }
+    /// 「输入充值码」按钮的悬停说明：额度之外还有一条不消耗额度的路（填自己的密钥），
+    /// 原本写在弹窗正文里，弹窗撤掉后挪到这里，免得刘海正文被撑长。
+    var creditEnterCodeHint: String {
+        pick("设置 → 额度与充值：兑换充值码，或填入自己的服务密钥（不消耗额度）",
+             "設定 →「残高とチャージ」：コードを使う、またはご自身のサービスキーを入力（残高は消費しません）")
+    }
+
+    /// 刘海内提示的按钮文案。
+    func notchPromptAction(_ action: NotchPromptAction) -> String {
+        switch action {
+        case .topUp: return creditTopUpAction
+        case .enterCode: return creditEnterCodeAction
+        case .dismiss: return creditLaterAction
+        }
+    }
+
+    /// 同上的悬停/辅助说明；没有额外说明时返回 nil。
+    func notchPromptActionHint(_ action: NotchPromptAction) -> String? {
+        switch action {
+        case .topUp, .dismiss: return nil
+        case .enterCode: return creditEnterCodeHint
+        }
+    }
 
     // MARK: 钱包页（设置 → 额度与充值）
 

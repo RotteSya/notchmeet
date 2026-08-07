@@ -105,6 +105,7 @@ final class AppController {
         control.install()
         notch.onSettings = { [weak self] point in self?.control.showMenu(at: point) }
         notch.onToggleRecording = { [weak self] in self?.toggleRecording() }
+        notch.onPromptAction = { [weak self] action in self?.handleNotchPromptAction(action) }
         control.onMenuVisibilityChanged = { [weak self] open in self?.notch.setSettingsMenuOpen(open) }
         control.onToggleRecording = { [weak self] in self?.toggleRecording() }
         control.recordingProvider = { [weak self] in self?.recording ?? false }
@@ -156,6 +157,8 @@ final class AppController {
         credit.endSession()   // 兜底：任何路径进来都保证表已停
         stopConnectionKeepWarm()
         setRecording(false)
+        // 配置变了（换成自己的 Key 就不再计量）→ 旧的额度提示不再成立，先撤掉。
+        notch.model.prompt = nil
         stt = nil; audio = nil; turn = nil; captureStarted = false
         switch AppConfig.pipeline {
         case .demo:
@@ -204,7 +207,7 @@ final class AppController {
         // 全 BYO/本地的会话不经过这道闸（不计量的东西永远不拦）。
         let metered = CreditPolicy.sessionIsMetered()
         if metered, !credit.canStartMeteredSession {
-            presentCreditGateAlert()
+            presentCreditPrompt()
             return
         }
         // Live pipeline only: capture/upload NOTHING until the user has seen and accepted
@@ -315,7 +318,15 @@ final class AppController {
         credit.$balanceSeconds.combineLatest(credit.$meteringActive)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] balance, metering in
-                self?.notch.model.creditSeconds = metering ? balance : nil
+                guard let self else { return }
+                self.notch.model.creditSeconds = metering ? balance : nil
+                // 充值到账（钱包里兑换了码）→ 刘海里的「额度已用完」自行退场：
+                // 事情已经被解决了，不该还要用户回来手动关掉一次提示。
+                guard balance > 0, self.notch.model.prompt == .credit else { return }
+                self.notch.model.prompt = nil
+                if !self.recording, self.notch.model.message == .creditExhausted {
+                    self.notch.model.message = .ready
+                }
             }
             .store(in: &creditCancellables)
         credit.onAlert = { [weak self] alert in
@@ -342,38 +353,31 @@ final class AppController {
             // 不再 `guard recording` 提前返回——那正是「表还在走、通知被吞」的成因。
             NSLog("[credit] exhausted — stopping session")
             let wasRecording = recording
-            if wasRecording { stopRecording() }
+            if wasRecording { stopRecording() }   // → enterReady() 会先清掉旧提示
             notch.model.message = .creditExhausted
-            if wasRecording { presentCreditExhaustedAlert() }
+            if wasRecording { presentCreditPrompt() }
         }
     }
 
-    /// 面试中途耗尽：已停止录音，给出最温和的下一步（内容都还在）。
-    private func presentCreditExhaustedAlert() {
-        let t = AppStrings.current
-        presentTopUpChoices(title: t.creditExhaustedTitle, body: t.creditExhaustedBody)
-    }
-
-    /// 开始前余额为 0：不进入录音，直接引导充值。
-    private func presentCreditGateAlert() {
-        let t = AppStrings.current
+    /// 额度用完（面试中途耗尽 / 余额为 0 无法开始）：把下一步放进刘海，**不弹模态**。
+    ///
+    /// 采集侧的洞已由 `runModalGuarded()`（ScreenShareGuard）堵上，弹窗不会再进共享画面；
+    /// 但模态还剩一处硬伤治不了：`NSApp.activate(ignoringOtherApps:)` 会把焦点从面试 App
+    /// 抢走，且 `runModal()` 阻塞 run loop——正在说话、正在共享屏幕的那一刻尤其致命。
+    /// 刘海本体既不抢焦点也不阻塞，且本来就在 `sharingType = .none` 的面板里。
+    private func presentCreditPrompt() {
         notch.model.message = .creditExhausted
-        presentTopUpChoices(title: t.creditCannotStartTitle, body: t.creditCannotStartBody)
+        notch.model.prompt = .credit
     }
 
-    private func presentTopUpChoices(title: String, body: String) {
-        let t = AppStrings.current
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = body
-        alert.addButton(withTitle: t.creditTopUpAction)      // 打开购买页
-        alert.addButton(withTitle: t.creditEnterCodeAction)  // 设置 → 额度与充值
-        alert.addButton(withTitle: t.cancel)
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModalGuarded() {
-        case .alertFirstButtonReturn: NSWorkspace.shared.open(Provisioning.buyURL)
-        case .alertSecondButtonReturn: openSettings(section: .wallet)
-        default: break
+    /// 刘海内提示的按钮：先撤掉提示，再执行。两条实际动作都会打开自己的窗口/浏览器，
+    /// 但那是用户刚刚点下去要求的，与「凭空抢焦点」不是一回事。
+    private func handleNotchPromptAction(_ action: NotchPromptAction) {
+        notch.model.prompt = nil
+        switch action {
+        case .topUp: NSWorkspace.shared.open(Provisioning.buyURL)
+        case .enterCode: openSettings(section: .wallet)
+        case .dismiss: break
         }
     }
 
@@ -607,6 +611,7 @@ final class AppController {
         notch.model.recording = false
         notch.model.message = .ready
         notch.model.status = .ready
+        notch.model.prompt = nil
     }
 
     private func enterListening() {
@@ -617,6 +622,7 @@ final class AppController {
         notch.model.recording = true
         notch.model.message = .listening
         notch.model.status = .listening
+        notch.model.prompt = nil
     }
 
     /// Arm the live pipeline: build providers, wire the audio→STT→turn→notch graph, and warm
@@ -749,6 +755,7 @@ final class AppController {
         model.errorDetail = nil
         model.intentLabel = ""
         model.question = ""
+        model.prompt = nil
         switch fixture {
         case "listening":
             model.recording = true; model.status = .listening; model.message = .listening
@@ -770,10 +777,18 @@ final class AppController {
         case "error":
             model.recording = true; model.status = .error; model.message = .generationError
             model.errorDetail = "接続を確認してください。"
+        case "credit-exhausted":
+            // 额度用完后的刘海内提示（原先是抢焦点的 NSAlert）。录音已停，但上一轮的答案
+            // 还留在屏上——这既是真实场景，也是操作行最容易被顶出卡片的那一版布局：
+            // 正文为空的 fixture 永远验不到「答案铺满 → 按钮被裁」那条路径。
+            model.recording = false; model.status = .ready; model.message = .creditExhausted
+            model.intentLabel = "自己紹介"; model.answer = answer
+            model.prompt = .credit
         default:
             model.recording = false; model.status = .ready; model.message = .ready
         }
-        if ["thinking", "streaming", "presenting", "overflow", "error"].contains(fixture) {
+        if ["thinking", "streaming", "presenting", "overflow", "error",
+            "credit-exhausted"].contains(fixture) {
             model.question = "学生時代に力を入れたことを教えてください。"
         }
         // 视觉 QA：FI_UI_CREDIT=<剩余秒数> 在任意 fixture 上叠加额度胶囊

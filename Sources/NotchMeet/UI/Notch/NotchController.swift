@@ -8,6 +8,8 @@ final class NotchController {
     let model = AnswerModel()
     var onSettings: ((NSPoint) -> Void)?
     var onToggleRecording: (() -> Void)?
+    /// 刘海内提示（额度用完等）的按钮被点击。
+    var onPromptAction: ((NotchPromptAction) -> Void)?
 
     /// Whether the live notch panel is excluded from screen capture/sharing (PLAN §3 S4).
     /// Read back from the panel itself so the self-check reflects reality, not intent.
@@ -22,6 +24,7 @@ final class NotchController {
     private var collapseWork: DispatchWorkItem?
     private var resizeScheduled = false
     private var lastHandledStatus: AnswerModel.Status?
+    private var lastHandledPrompt: NotchPrompt?
     private var cancellables = Set<AnyCancellable>()
 
     private let expandedWidth: CGFloat = 520
@@ -33,7 +36,8 @@ final class NotchController {
             model: model,
             onHover: { [weak self] in self?.hover($0) },
             onSettings: { [weak self] in self?.showSettings() },
-            onToggleRecording: { [weak self] in self?.onToggleRecording?() }
+            onToggleRecording: { [weak self] in self?.onToggleRecording?() },
+            onPromptAction: { [weak self] action in self?.onPromptAction?(action) }
         )
         view.autoresizingMask = [.width, .height]
         panel.contentView = view
@@ -135,7 +139,10 @@ final class NotchController {
         // 与 NotchView.layoutExpanded 同源：那边会在可用高度里减掉同一个 inset。
         let chrome: CGFloat = (reservesContentRows ? (62 + 38 + 18) : 54)
             + NotchMetrics.answerBottomInset
-        let desired = max(minimumExpandedHeight, chrome + answerHeight)
+        // 提示的操作行（去充值 / 输入充值码 / 稍后）也要占高度，否则按钮会被卡片裁掉。
+        // 与 NotchView.layoutExpanded 减掉的是同一个函数。
+        let desired = max(minimumExpandedHeight,
+                          chrome + answerHeight + NotchMetrics.promptReserve(model.prompt))
         // Leave room for the bottom shadow margin so the card never exceeds the display.
         return min(desired, floor(screen.frame.height) - NotchMetrics.shadowMarginBottom)
     }
@@ -243,6 +250,19 @@ final class NotchController {
                 if !hovering { scheduleCollapse(after: 12) }
             }
         }
+        // 状态分支之后：提示到达时必须**盖过**上面刚排的自动收起。提示是用户此刻唯一的
+        // 出口（额度用完 → 去充值 / 输入充值码），收起卡片等于把出口一起收走；刘海若被
+        // ⌘⇧Space 隐藏着，也要重新出现——否则弹窗撤掉后就真的什么都看不到了。
+        if model.prompt != lastHandledPrompt {
+            lastHandledPrompt = model.prompt
+            if model.prompt != nil {
+                if !visible { visible = true; panel.orderFrontRegardless() }
+                collapseWork?.cancel()
+                setExpanded(true)
+            } else if !hovering {
+                scheduleCollapse(after: 4)   // 用户做完选择 → 安静收回
+            }
+        }
         scheduleResize()
     }
 
@@ -263,6 +283,8 @@ final class NotchController {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            // 提示未决时永不收起——hover 离开、状态回到待机等路径都从这里过。
+            guard self.model.prompt == nil else { return }
             if !self.hovering && !self.settingsMenuOpen { self.setExpanded(false) }
         }
         collapseWork = work

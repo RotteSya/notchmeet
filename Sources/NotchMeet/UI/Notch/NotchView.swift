@@ -10,6 +10,7 @@ final class NotchView: NSView {
     private let onHover: (Bool) -> Void
     private let onSettings: () -> Void
     private let onToggleRecording: () -> Void
+    private let onPromptAction: (NotchPromptAction) -> Void
 
     // Surface (fills the whole panel incl. the transparent shadow margin).
     private let surface = NotchSurfaceView()
@@ -57,6 +58,8 @@ final class NotchView: NSView {
         return f
     }()
     private let answerStream = StreamingAnswerView()
+    /// 需要用户做选择时的操作行（额度用完等）；无提示时隐藏且不占高度。
+    private let promptRow = NotchPromptRow()
 
     private lazy var morph = DisplayTween(host: self, value: 0)
     /// 几何专用的第二条 morph 通道：展开方向带弹簧过冲（圆角/内缩微微越过再落定），
@@ -81,11 +84,13 @@ final class NotchView: NSView {
     init(model: AnswerModel,
          onHover: @escaping (Bool) -> Void,
          onSettings: @escaping () -> Void,
-         onToggleRecording: @escaping () -> Void) {
+         onToggleRecording: @escaping () -> Void,
+         onPromptAction: @escaping (NotchPromptAction) -> Void) {
         self.model = model
         self.onHover = onHover
         self.onSettings = onSettings
         self.onToggleRecording = onToggleRecording
+        self.onPromptAction = onPromptAction
         super.init(frame: .zero)
         build()
         observe()
@@ -109,8 +114,10 @@ final class NotchView: NSView {
         collapsedBar.addSubview(collapsedSettings)
         addSubview(collapsedBar)
 
+        promptRow.onAction = { [weak self] action in self?.onPromptAction(action) }
         [headerStatus, headerREC, statusText, creditChip, recordButton, settingsButton,
-         heardLabel, heardValue, intentChip, answerLabel, answerStream].forEach { expandedContent.addSubview($0) }
+         heardLabel, heardValue, intentChip, answerLabel, answerStream,
+         promptRow].forEach { expandedContent.addSubview($0) }
         addSubview(expandedContent)
         expandedContent.alphaValue = 0
 
@@ -184,6 +191,7 @@ final class NotchView: NSView {
         heardValue.stringValue = model.question
         intentChip.text = model.intentLabel
         creditChip.update(seconds: model.creditSeconds, strings: s)
+        promptRow.update(model.prompt, strings: s)
 
         // 新一轮问答（识别出的问题变了）→ 问题/意图行入场动效，与答案逐字诞生同拍。
         if model.question != lastQuestion {
@@ -368,11 +376,18 @@ final class NotchView: NSView {
         // 与 NotchController.expandedHeight 同源封顶；再夹一次卡片剩余高度，吸收
         // 「控制器按固定 chrome 估算、这里按实际累加」之间的余量差。
         let measured = NotchType.answerHeight(display, empty: model.answer.isEmpty, width: contentW)
-        let available = max(0, size.height - y - NotchMetrics.answerBottomInset)
-        let answerH = min(measured, NotchMetrics.maxAnswerHeight, available)
+        let answerH = NotchMetrics.answerHeight(measured: measured, cardHeight: size.height,
+                                                bodyTop: y, prompt: model.prompt)
         let answerFrame = CGRect(x: contentX, y: y, width: contentW, height: answerH)
         answerLabel.frame = answerFrame
         answerStream.frame = answerFrame
+
+        // 操作行紧跟正文；它占的高度已由 NotchController 计入卡片高度（同一对常量）。
+        if model.prompt != nil {
+            promptRow.frame = CGRect(x: contentX, y: y + answerH + NotchPromptRow.topGap,
+                                     width: contentW, height: NotchPromptRow.height)
+            promptRow.needsLayout = true
+        }
     }
 
     /// The exact string the stream view renders（与 refresh 里传给 setText 的同源）。
@@ -536,6 +551,162 @@ final class CreditChipView: NSView {
         tint.withAlphaComponent(0.12).setFill(); cap.fill()
         cap.lineWidth = 0.75
         tint.withAlphaComponent(0.22).setStroke(); cap.stroke()
+    }
+}
+
+// MARK: - Prompt row
+
+/// 需要用户做一次选择时，选项就长在刘海里（额度用完 → 去充值 / 输入充值码 / 稍后）。
+/// 一行安静的 hairline glass 按钮，坐在正文下方，撑起的高度由 `NotchController`
+/// 一并计入卡片高度，所以按钮永远不会被裁掉。
+final class NotchPromptRow: NSView {
+    /// 与 `NotchController.expandedHeight()` 共用的两个常量——量高与排版必须同源。
+    static let height: CGFloat = 24
+    static let topGap: CGFloat = 10
+    private static let spacing: CGFloat = 8
+
+    var onAction: ((NotchPromptAction) -> Void)?
+
+    private var buttons: [NotchPromptButton] = []
+    private var shownActions: [NotchPromptAction] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isFlipped: Bool { true }
+
+    func update(_ prompt: NotchPrompt?, strings: AppStrings) {
+        guard let prompt else {
+            if !isHidden { isHidden = true }
+            return
+        }
+        isHidden = false
+        let actions = prompt.actions
+        if actions != shownActions {
+            shownActions = actions
+            buttons.forEach { $0.removeFromSuperview() }
+            buttons = actions.map { action in
+                let b = NotchPromptButton { [weak self] in self?.onAction?(action) }
+                addSubview(b)
+                return b
+            }
+        }
+        for (button, action) in zip(buttons, actions) {
+            button.update(title: strings.notchPromptAction(action),
+                          hint: strings.notchPromptActionHint(action),
+                          prominent: action == prompt.primaryAction)
+        }
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        var x: CGFloat = 0
+        for button in buttons {
+            let w = button.intrinsicContentSize.width
+            button.frame = CGRect(x: x, y: 0, width: w, height: Self.height)
+            x += w + Self.spacing
+        }
+    }
+}
+
+/// 提示行里的一个选项。与 `NotchControlButton` 同族的 hairline glass，只是承载文字。
+/// first-mouse：在非激活面板里点一下就生效，不需要先把焦点从面试 App 抢过来。
+final class NotchPromptButton: NSControl {
+    private let onAction: () -> Void
+    private var title = ""
+    private var hint: String?
+    private var prominent = false
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+    private var pressed = false { didSet { if pressed != oldValue { needsDisplay = true } } }
+    private var trackingAreaRef: NSTrackingArea?
+
+    private let hPad: CGFloat = 11
+
+    init(action: @escaping () -> Void) {
+        self.onAction = action
+        super.init(frame: NSRect(x: 0, y: 0, width: 64, height: NotchPromptRow.height))
+        setAccessibilityRole(.button)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// hint 必须参与短路判断：它是独立于 title 的可选文案，两者不保证同时变化。
+    /// 只比 title/prominent 的话，悬停说明会一直停在上一次的值。
+    func update(title: String, hint: String?, prominent: Bool) {
+        guard title != self.title || prominent != self.prominent || hint != self.hint else { return }
+        let needsRedraw = title != self.title || prominent != self.prominent
+        self.title = title
+        self.prominent = prominent
+        self.hint = hint
+        toolTip = hint
+        setAccessibilityLabel(title)
+        // 只换了悬停说明 → 尺寸与绘制都没变，不必惊动排版。
+        guard needsRedraw else { return }
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    private var attributed: NSAttributedString {
+        NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold),
+            .foregroundColor: prominent ? NotchPalette.primary : NotchPalette.secondary,
+            .kern: 0.2,
+        ])
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: ceil(attributed.size().width) + hPad * 2, height: NotchPromptRow.height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let cap = NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7)
+        let lift: CGFloat = pressed ? -0.03 : (hovering ? 0.06 : 0)
+        if prominent {
+            NotchPalette.accent.withAlphaComponent(0.22 + lift).setFill(); cap.fill()
+            cap.lineWidth = 0.75
+            NotchPalette.accent.withAlphaComponent(0.42).setStroke(); cap.stroke()
+        } else {
+            NSColor(white: 1, alpha: 0.07 + lift).setFill(); cap.fill()
+            cap.lineWidth = 0.75
+            NSColor(white: 1, alpha: 0.12).setStroke(); cap.stroke()
+        }
+        let s = attributed.size()
+        attributed.draw(at: NSPoint(x: (bounds.width - s.width) / 2,
+                                    y: (bounds.height - s.height) / 2))
+    }
+
+    // Hover.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingAreaRef { removeTrackingArea(t) }
+        let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t)
+        trackingAreaRef = t
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; pressed = false }
+
+    // Press + click.
+    override func mouseDown(with event: NSEvent) { pressed = true }
+    override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        pressed = bounds.contains(p)
+    }
+    override func mouseUp(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let inside = bounds.contains(p)
+        pressed = false
+        if inside { onAction() }
     }
 }
 
