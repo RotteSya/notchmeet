@@ -85,7 +85,7 @@ final class AppController {
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: t.editMenu)
-        ScreenShareGuard.protect(edit)   // 设置/引导打开时应用是 .regular，菜单栏可点开
+        ScreenShareGuard.protect(edit)   // accessory 下菜单栏不显示，但键盘等价键仍会路由到它
         editItem.submenu = edit
         edit.addItem(withTitle: t.cut, action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: t.copy, action: #selector(NSText.copy(_:)), keyEquivalent: "c")
