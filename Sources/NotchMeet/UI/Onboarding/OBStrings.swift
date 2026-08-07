@@ -31,6 +31,8 @@ struct OBStrings {
     // v2 — 见面礼步（出厂含受管服务时替代密钥步；到账动效 + 额度说明）。
     let kGift, hGiftGranted, hGiftBalance, pGift, giftNote: String
     let sumCreditLabel: String
+    /// 面试录音进行中重开引导时，demo 只显示不出声的说明（E5：TTS 会被麦克风采进会议）。
+    let demoMutedLive: String
 
     static func of(_ lang: UILanguage) -> OBStrings { lang == .ja ? ja : zh }
 
@@ -82,7 +84,8 @@ struct OBStrings {
         kGift: "STEP 3 · 见面礼", hGiftGranted: "60 分钟，已到账", hGiftBalance: "你的可用额度",
         pGift: "无需任何设置，装好即用。额度只在面试录音时消耗，用完可随时充值。",
         giftNote: "自备服务密钥的用户不消耗额度",
-        sumCreditLabel: "可用额度"
+        sumCreditLabel: "可用额度",
+        demoMutedLive: "🔇 正在面试录音——演示只显示回答、不播放声音，以免被麦克风带进通话。"
     )
 
     static let ja = OBStrings(
@@ -133,6 +136,7 @@ struct OBStrings {
         kGift: "STEP 3 / プレゼント", hGiftGranted: "60分ぶん、チャージ済み", hGiftBalance: "利用できる残り時間",
         pGift: "設定は一切不要、このまま使えます。残高は面接の録音中だけ消費され、いつでもチャージできます。",
         giftNote: "ご自身のサービスキーを使う場合、残高は消費されません",
-        sumCreditLabel: "残り時間"
+        sumCreditLabel: "残り時間",
+        demoMutedLive: "🔇 面接の収録中のため、デモは表示のみ——音声はマイクに入らないよう再生しません。"
     )
 }

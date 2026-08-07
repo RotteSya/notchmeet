@@ -11,10 +11,6 @@ final class NotchController {
     /// 刘海内提示（额度用完等）的按钮被点击。
     var onPromptAction: ((NotchPromptAction) -> Void)?
 
-    /// Whether the live notch panel is excluded from screen capture/sharing (PLAN §3 S4).
-    /// Read back from the panel itself so the self-check reflects reality, not intent.
-    var screenShareGuarded: Bool { panel.sharingType == .none }
-
     private let panel: NotchPanel
     private var hovering = false
     private var settingsMenuOpen = false

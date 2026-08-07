@@ -7,7 +7,6 @@ import AppKit
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var root: SettingsRoot?
-    private let previousPolicy: NSApplication.ActivationPolicy
     private let store: ScriptStore
     private let factStore: FactStore
     private let sessionStore: SessionStore
@@ -21,7 +20,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.store = store
         self.factStore = factStore
         self.sessionStore = sessionStore
-        self.previousPolicy = NSApp.activationPolicy()
         super.init()
     }
 
@@ -77,14 +75,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func present(_ window: NSWindow) {
-        NSApp.setActivationPolicy(.regular)
+        // 保持 .accessory 直接拿 key：面试中打开设置时，切到 .regular 会让 app 出现在
+        // Dock 与 ⌘Tab 里——共享整屏的面试官看得一清二楚。accessory app 经
+        // activate(ignoringOtherApps:) 后窗口一样能成为 key window 并接收键盘输入
+        // （已实机验证），根本不需要切策略。
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         #if DEBUG
         if Self.visualQA {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 try? "\(window.windowNumber)".write(toFile: "/tmp/nm-settings-window.txt", atomically: true, encoding: .utf8)
-                NSLog("FI_SETTINGS_WINDOW=%ld", window.windowNumber)
+                // key=1 证明 accessory 策略下窗口拿到了键盘焦点（E4 验证钩子）。
+                NSLog("FI_SETTINGS_WINDOW=%ld key=%d policy=%ld", window.windowNumber,
+                      window.isKeyWindow ? 1 : 0, NSApp.activationPolicy().rawValue)
+                for w in NSApp.windows {
+                    NSLog("FI_WINDOW class=%@ num=%ld visible=%d sharing=%ld frame=%@",
+                          String(describing: type(of: w)), w.windowNumber, w.isVisible ? 1 : 0,
+                          w.sharingType.rawValue, NSStringFromRect(w.frame))
+                }
             }
         }
         #endif
@@ -97,7 +105,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(previousPolicy)
         root?.setRunning(false)
     }
 }

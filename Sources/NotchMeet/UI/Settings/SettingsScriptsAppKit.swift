@@ -255,6 +255,9 @@ final class ScriptsSection: FlippedView {
 
     private func importFromFile() {
         let panel = NSOpenPanel()
+        // 文件选择器也是本进程的窗口，默认可被屏幕共享采集——而它打开时列出的正是
+        // 原稿文件名（含公司名）。与其他弹窗同门。
+        ScreenShareGuard.exclude(panel)
         var types: [UTType] = [.plainText, .text]
         if let md = UTType(filenameExtension: "md") { types.append(md) }
         if let md = UTType(filenameExtension: "markdown") { types.append(md) }

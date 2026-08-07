@@ -48,8 +48,10 @@ final class AppController {
         credit.bootstrap()               // 迎新赠礼（仅出厂带受管服务的构建）
         observeCredit()
         // 菜单窗口是 AppKit 私有窗口，只能在它出现的那一刻补设 sharingType——在任何 UI
-        // 之前装好这道闸门（PLAN §3 S4）。
+        // 之前装好这道闸门（PLAN §3 S4）。窗口总兜底同理：TUINSWindow（输入候选）、
+        // tooltip 等 AppKit 自建窗口没有构造点，只能在首次绘制时补设。
         ScreenShareGuard.installMenuGuard()
+        ScreenShareGuard.installWindowGuard()
         notch.show()
         installEditMenu()
         installControls()
@@ -399,7 +401,8 @@ final class AppController {
         return .init(recording: recording, captureOK: captureOK, captureState: state,
                      sttConnected: stt?.isConnected ?? false, deepgramKey: dgKey, llm: llm,
                      llmChinaBlocked: ProviderRegistry.llmChinaBlocked(),
-                     screenShareGuard: notch.screenShareGuarded,
+                     // 全窗口审计，不再只看刘海一个窗口（E6：字面真语义假）。
+                     screenShareGuard: ScreenShareGuard.auditPasses(),
             activeScript: scriptStore.active?.displayLabel,
             hasScriptsButNoneActive: scriptStore.activeID == nil && !scriptStore.all.isEmpty,
                      // 只对「会被计量」的配置显示额度——全 BYO 的用户没有额度概念。
@@ -508,6 +511,13 @@ final class AppController {
                 if v.isEmpty { Secrets.delete(name) } else { Secrets.set(name, v) }
             }
             ob.onPlayDemo = { [weak self] answer, intent, spokenJa in self?.runOnboardingDemo(answer: answer, intent: intent, spokenJa: spokenJa) }
+            #if DEBUG
+            // 视觉 QA：FI_QA_DEMO_LIVE=1 让引导 demo 步按「面试录音进行中」渲染（🔇 提示）。
+            let qaDemoLive = ProcessInfo.processInfo.environment["FI_QA_DEMO_LIVE"] == "1"
+            ob.isLiveCapture = { [weak self] in qaDemoLive || (self?.recording ?? false) }
+            #else
+            ob.isLiveCapture = { [weak self] in self?.recording ?? false }
+            #endif
             ob.onFinish = { [weak self] _, _ in
                 guard let self else { return }   // script already persisted on import
                 Settings.onboarded = true
@@ -541,14 +551,18 @@ final class AppController {
     private func runOnboardingDemo(answer: String, intent: String, spokenJa: String) {
         let model = notch.model
 
-        turn?.paused = true
-        demoUnpauseWork?.cancel()
-        let resume = DispatchWorkItem { [weak self] in self?.turn?.paused = !(self?.recording ?? false) }
-        demoUnpauseWork = resume
-        // Cover the spoken question (~0.18s/char for JA TTS) plus the streamed answer + grace.
-        let window = Double(spokenJa.count) * 0.18 + 3.0
-        DispatchQueue.main.asyncAfter(deadline: .now() + window, execute: resume)
-        demoVoice.speakJapanese(spokenJa)
+        // 只有 TTS 真出声时才需要暂停真转录管线（防自己的音频 tap 采到 demo 语音后
+        // 抢答）。录音进行中 demo 是静音的（E5）——那时暂停只会白丢一段真实转录，
+        // 管线照常跑，真问题到达时 demo 让路（见下方接管检查）。
+        if demoVoice.speakJapanese(spokenJa, liveCaptureActive: recording) {
+            turn?.paused = true
+            demoUnpauseWork?.cancel()
+            let resume = DispatchWorkItem { [weak self] in self?.turn?.paused = !(self?.recording ?? false) }
+            demoUnpauseWork = resume
+            // Cover the spoken question (~0.18s/char for JA TTS) plus the streamed answer + grace.
+            let window = Double(spokenJa.count) * 0.18 + 3.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + window, execute: resume)
+        }
 
         let perChar = max(UInt64(12_000_000), 1_600_000_000 / UInt64(max(1, answer.count)))
         Task { @MainActor in
@@ -559,12 +573,17 @@ final class AppController {
             model.errorDetail = nil
             model.status = .thinking
             try? await Task.sleep(nanoseconds: 650_000_000)
+            // 接管检查：录音中管线不暂停，真回合一旦写入自己的问题，demo 必须立刻
+            // 住手——否则两路会交错写同一个 answer，真答案被 demo 字符污染。
+            guard model.question == spokenJa else { return }
             model.message = .suggesting
             model.status = .streaming
             for ch in answer + "\n" {
+                guard model.question == spokenJa else { return }
                 model.answer.append(ch)
                 try? await Task.sleep(nanoseconds: perChar)
             }
+            guard model.question == spokenJa else { return }
             model.message = .completed
             model.status = .presenting
         }
