@@ -618,6 +618,7 @@ final class NotchPromptRow: NSView {
 final class NotchPromptButton: NSControl {
     private let onAction: () -> Void
     private var title = ""
+    private var hint: String?
     private var prominent = false
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
     private var pressed = false { didSet { if pressed != oldValue { needsDisplay = true } } }
@@ -632,12 +633,18 @@ final class NotchPromptButton: NSControl {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// hint 必须参与短路判断：它是独立于 title 的可选文案，两者不保证同时变化。
+    /// 只比 title/prominent 的话，悬停说明会一直停在上一次的值。
     func update(title: String, hint: String?, prominent: Bool) {
-        guard title != self.title || prominent != self.prominent else { return }
+        guard title != self.title || prominent != self.prominent || hint != self.hint else { return }
+        let needsRedraw = title != self.title || prominent != self.prominent
         self.title = title
         self.prominent = prominent
+        self.hint = hint
         toolTip = hint
         setAccessibilityLabel(title)
+        // 只换了悬停说明 → 尺寸与绘制都没变，不必惊动排版。
+        guard needsRedraw else { return }
         invalidateIntrinsicContentSize()
         needsDisplay = true
     }

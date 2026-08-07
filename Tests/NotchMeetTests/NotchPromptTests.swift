@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import notchmeet
 
@@ -50,6 +51,21 @@ final class NotchPromptTests: XCTestCase {
         let promptBottom = bodyTop + answerH + NotchMetrics.promptReserve(.credit)
         XCTAssertLessThanOrEqual(promptBottom, card,
                                  "操作行的底边越出了卡片——按钮会被裁掉")
+    }
+
+    /// 回归：`hint` 原本没参与 `update` 的短路判断，标题不变时悬停说明会一直停在旧值。
+    /// hint 是独立于 title 的可选文案，两者不保证同时变化。
+    @MainActor
+    func testHintUpdatesEvenWhenTheTitleIsUnchanged() {
+        let button = NotchPromptButton(action: {})
+        button.update(title: "输入充值码…", hint: "旧说明", prominent: false)
+        XCTAssertEqual(button.toolTip, "旧说明")
+
+        button.update(title: "输入充值码…", hint: "新说明", prominent: false)
+        XCTAssertEqual(button.toolTip, "新说明", "标题没变但说明变了，toolTip 必须跟上")
+
+        button.update(title: "输入充值码…", hint: nil, prominent: false)
+        XCTAssertNil(button.toolTip, "说明被撤掉时也要跟着清空")
     }
 
     /// 没有提示时不该凭空少一截：同样的卡片，答案区必须正好多出预留的那一截。
