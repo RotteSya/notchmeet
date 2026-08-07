@@ -547,14 +547,18 @@ final class AppController {
     private func runOnboardingDemo(answer: String, intent: String, spokenJa: String) {
         let model = notch.model
 
-        turn?.paused = true
-        demoUnpauseWork?.cancel()
-        let resume = DispatchWorkItem { [weak self] in self?.turn?.paused = !(self?.recording ?? false) }
-        demoUnpauseWork = resume
-        // Cover the spoken question (~0.18s/char for JA TTS) plus the streamed answer + grace.
-        let window = Double(spokenJa.count) * 0.18 + 3.0
-        DispatchQueue.main.asyncAfter(deadline: .now() + window, execute: resume)
-        demoVoice.speakJapanese(spokenJa, liveCaptureActive: recording)
+        // 只有 TTS 真出声时才需要暂停真转录管线（防自己的音频 tap 采到 demo 语音后
+        // 抢答）。录音进行中 demo 是静音的（E5）——那时暂停只会白丢一段真实转录，
+        // 管线照常跑，真问题到达时 demo 让路（见下方接管检查）。
+        if demoVoice.speakJapanese(spokenJa, liveCaptureActive: recording) {
+            turn?.paused = true
+            demoUnpauseWork?.cancel()
+            let resume = DispatchWorkItem { [weak self] in self?.turn?.paused = !(self?.recording ?? false) }
+            demoUnpauseWork = resume
+            // Cover the spoken question (~0.18s/char for JA TTS) plus the streamed answer + grace.
+            let window = Double(spokenJa.count) * 0.18 + 3.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + window, execute: resume)
+        }
 
         let perChar = max(UInt64(12_000_000), 1_600_000_000 / UInt64(max(1, answer.count)))
         Task { @MainActor in
@@ -565,12 +569,17 @@ final class AppController {
             model.errorDetail = nil
             model.status = .thinking
             try? await Task.sleep(nanoseconds: 650_000_000)
+            // 接管检查：录音中管线不暂停，真回合一旦写入自己的问题，demo 必须立刻
+            // 住手——否则两路会交错写同一个 answer，真答案被 demo 字符污染。
+            guard model.question == spokenJa else { return }
             model.message = .suggesting
             model.status = .streaming
             for ch in answer + "\n" {
+                guard model.question == spokenJa else { return }
                 model.answer.append(ch)
                 try? await Task.sleep(nanoseconds: perChar)
             }
+            guard model.question == spokenJa else { return }
             model.message = .completed
             model.status = .presenting
         }
