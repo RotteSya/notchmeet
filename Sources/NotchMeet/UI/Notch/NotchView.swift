@@ -153,8 +153,11 @@ final class NotchView: NSView {
         let s = AppStrings.current
 
         let activity = model.answer.count / 12
+        // 转写断连重连中：宝石换成琥珀「!」（审计 R4，决策在 NotchPresentation.markStatus）。
+        let displayStatus = NotchPresentation.markStatus(status: model.status,
+                                                         message: model.message)
         for mark in [collapsedStatus, headerStatus] {
-            mark.status = model.status
+            mark.status = displayStatus
             mark.recording = model.recording
             mark.activity = activity
         }

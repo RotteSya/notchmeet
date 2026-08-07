@@ -34,6 +34,8 @@ final class AppController {
         notch.model.recording = on
         turn?.paused = !on   // 停止时丢弃在途转录，避免停后还弹出答案
     }
+    /// 转写断连/重连期间刘海显示的裁决（审计 R4/R5，纯状态机可测）。
+    private var sttOutage = SttOutageUIState()
     private var languageCancellable: AnyCancellable?
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
@@ -681,15 +683,24 @@ final class AppController {
         // 转写连接中断 → 刘海显性提示。30 秒的重连预算期间用户必须知道它没在工作，
         // 否则只是把旧的「静默失联」缩短到 30 秒而已。同 Apple 引擎的资产下载进度，
         // 只在具体类上取回调，不动 SttClient 协议。
+        //
+        // 恢复时**只还原断连前的状态，绝不 enterListening()**（审计 R5）：旧实现在重连
+        // 成功的一瞬清空 model.answer——断连恰好发生在展示答案时（网络抖动最常见的
+        // 时机就是通话中），用户正照着念的答案会在嘴巴念到一半时凭空消失。
         if let dg = sttc as? DeepgramSttClient {
             dg.onConnectionChanged = { [weak self] connected in
                 DispatchQueue.main.async {
                     guard let self, self.recording else { return }
+                    let model = self.notch.model
                     if connected {
-                        // 只有当前显示的就是重连提示时才恢复，避免盖掉正在展示的答案。
-                        if self.notch.model.message == .sttReconnecting { self.enterListening() }
+                        if let restore = self.sttOutage.noteReconnected(currentMessage: model.message) {
+                            model.message = restore.message
+                            model.status = restore.status
+                        }
                     } else {
-                        self.notch.model.message = .sttReconnecting
+                        self.sttOutage.noteDisconnected(currentMessage: model.message,
+                                                        currentStatus: model.status)
+                        model.message = .sttReconnecting
                     }
                 }
             }

@@ -77,6 +77,13 @@ enum NotchPresentation {
         return strings.runtimeMessage(message)
     }
 
+    /// 状态宝石的显示状态（审计 R4）：转写断连重连中以 .error（琥珀「!」）顶掉真实
+    /// status。折叠态唯一的可视元素就是这颗宝石——不动它的话，收起的刘海在整个 30s
+    /// 重连预算里与正常聆听毫无区别。只影响显示，真实 status 仍驱动控制器状态机。
+    static func markStatus(status: AnswerModel.Status, message: RuntimeMessage) -> AnswerModel.Status {
+        message == .sttReconnecting ? .error : status
+    }
+
     /// 头部状态行的唯一决策点（审计 R3）。
     ///
     /// `text` 的契约是「answer 非空即原样返回」，于是流已提交后中途断开时，
