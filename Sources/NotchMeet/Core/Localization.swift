@@ -326,6 +326,11 @@ struct AppStrings {
     func llmErrorGeneric(_ code: Int) -> String {
         pick("请求失败（HTTP \(code)）", "リクエストに失敗しました（HTTP \(code)）")
     }
+    /// R2：所有已配置的回答服务都在首 token 预算内毫无响应（网络拥塞的典型形态）。
+    var llmErrorAllSlow: String {
+        pick("所有回答服务都响应过慢，请检查网络后重试",
+             "すべての回答サービスの応答が遅すぎます。ネットワークをご確認のうえ再度お試しください")
+    }
     var deleteIncompleteTitle: String {
         pick("部分数据未能删除", "一部のデータを削除できませんでした")
     }

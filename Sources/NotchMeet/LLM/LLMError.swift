@@ -4,6 +4,8 @@ enum LLMError: Error, LocalizedError {
     case badURL
     case missingKey
     case http(Int)
+    /// 链上所有 provider 都在首 token 预算内一个字没吐（R2 看门狗全链耗尽）。
+    case allProvidersSlow
 
     /// 面试进行中的错误文案必须可行动。「HTTP 429」对着刘海念不出任何下一步，
     /// 而这几个状态码恰好对应完全不同的处置：等一下、换 Key、还是别等了。
@@ -11,6 +13,7 @@ enum LLMError: Error, LocalizedError {
         switch self {
         case .badURL: return "bad URL"
         case .missingKey: return AppStrings.current.llmErrorMissingKey
+        case .allProvidersSlow: return AppStrings.current.llmErrorAllSlow
         case .http(let code):
             switch code {
             case 401, 403: return AppStrings.current.llmErrorAuth(code)
