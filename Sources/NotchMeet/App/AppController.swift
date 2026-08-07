@@ -36,6 +36,11 @@ final class AppController {
     }
     /// 转写断连/重连期间刘海显示的裁决（审计 R4/R5，纯状态机可测）。
     private var sttOutage = SttOutageUIState()
+    /// 慢终稿探测（审计 R1）：连续超阈值 → 面试中热切换到端侧引擎。
+    private var sttHealth = SttHealthTracker()
+    /// 本场是否已尝试过热切换（成败都算）。切换是一次性止损，不反复横跳。
+    private var sttDegradedThisSession = false
+    private var sttSwitchRevertWork: DispatchWorkItem?
     private var languageCancellable: AnyCancellable?
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
@@ -229,6 +234,7 @@ final class AppController {
             // 新一场面试：上一场的回答不能出现在这一场的回看里（拿上一家公司的答案
             // 回答这一家，正是这个 app 最不能犯的错）。
             answerHistory.reset()
+            sttHealth.reset()   // 上一场的慢终稿计数不跨场
             sessions.begin(scriptName: scriptStore.active?.displayLabel)
             setRecording(true)
             credit.beginSession(metered: metered)
@@ -300,6 +306,17 @@ final class AppController {
         stopConnectionKeepWarm()
         captureStarted = false
         setRecording(false)
+        // R1 的降级只在本场有效：下一场重新按偏好解析（网络可能已经恢复，
+        // Deepgram 的识别质量仍然更好）。就地换回解析结果，不重载整条管线。
+        if sttDegradedThisSession {
+            sttDegradedThisSession = false
+            sttHealth.reset()
+            sttSwitchRevertWork?.cancel()
+            let fresh = ProviderRegistry.makeStt()
+            attachSttHandlers(fresh)
+            routeAudio(to: fresh)
+            stt = fresh
+        }
         // 本场落盘供复盘。stopRecording 是幂等的（多条 teardown 路径都会走到），
         // SessionStore.end 对「没有进行中的会话」同样幂等。
         sessions.end()
@@ -661,10 +678,28 @@ final class AppController {
         }
         tm.onTurnRetracted = { [weak self] q in self?.sessions.retractLast(question: q) }
         tm.paused = true   // ignore transcripts until the session actually starts
+        self.turn = tm
 
-        sttc.onTranscript = { [weak tm, weak self] t in
+        attachSttHandlers(sttc)
+
+        let capture = AudioCaptureFactory.make()
+        self.audio = capture
+        routeAudio(to: sttc)
+        // Faithful §4 T0: use the audio path's last-voiced time (≈ last phoneme).
+        tm.latency.voicedClock = { [weak capture] in capture?.lastVoicedUptimeNs ?? 0 }
+        // R1：每轮的 STT 交付耗时喂给慢终稿探测（连续超阈值 → 热切换端侧引擎）。
+        tm.latency.onSttFinalDelay = { [weak self] ms in self?.noteSttDelivery(ms) }
+
+        self.stt = sttc
+        enterReady()
+    }
+
+    /// 把 STT 客户端接进管线的全部回调（转写 / 资产下载 / 断连重连 / 错误）。
+    /// armLive 与 R1 的中途热切换共用——两处各接一份迟早漏改一处。
+    private func attachSttHandlers(_ sttc: SttClient) {
+        sttc.onTranscript = { [weak self] t in
             if !t.text.isEmpty { self?.inactivity.noteActivity() } // interviewer was heard
-            DispatchQueue.main.async { tm?.handleTranscript(t) }
+            DispatchQueue.main.async { self?.turn?.handleTranscript(t) }
         }
         // 端侧日语资产缺失时（Apple 引擎，macOS 26+）主动下载模型；把进度接到既有的
         // STT 状态/错误通道（`.sttError` + `errorDetail` 会被 NotchPresentation 渲染为整句正文）。
@@ -727,19 +762,63 @@ final class AppController {
                 }
             }
         }
+    }
 
-        let capture = AudioCaptureFactory.make()
-        capture.onPCM = { [weak sttc] pcm in
+    /// 音频链路 → 指定 STT 客户端。声级总线永远在路上（刘海光场不因换引擎熄灭）。
+    private func routeAudio(to sttc: SttClient?) {
+        audio?.onPCM = { [weak sttc] pcm in
             VoiceLevelBus.shared.push(pcm16: pcm)   // 声级 → 刘海光场（听声起伏）
             sttc?.write(pcm)
         }
-        // Faithful §4 T0: use the audio path's last-voiced time (≈ last phoneme).
-        tm.latency.voicedClock = { [weak capture] in capture?.lastVoicedUptimeNs ?? 0 }
+    }
 
-        self.turn = tm
-        self.stt = sttc
-        self.audio = capture
-        enterReady()
+    // MARK: - R1：慢终稿 → 面试中热切换端侧引擎
+
+    /// LatencyMonitor 上报的每轮 STT 交付耗时（主线程）。只在「用户没有手动钉死引擎
+    /// （.auto）+ 当前在用 Deepgram + 本场还没切换过」时喂探测器——`.auto` 的承诺
+    /// 就是替用户做对的选择，而它此前只是开机时的一次性时区猜测，面试中从不重估。
+    private func noteSttDelivery(_ ms: Double) {
+        guard recording, !sttDegradedThisSession,
+              Settings.sttEngine == .auto, stt is DeepgramSttClient else { return }
+        NSLog("[stt-health] final delivery %dms (threshold %dms)", Int(ms), Int(sttHealth.thresholdMs))
+        guard sttHealth.note(deliveryMs: ms) else { return }
+        degradeSttToApple()
+    }
+
+    /// 连续慢终稿 → 就地切到 Apple 端侧识别，录音不断、回合状态机不动。
+    /// 成败都只尝试一次：切换是止损动作，反复横跳只会把两边的冷启动都吃一遍。
+    private func degradeSttToApple() {
+        sttDegradedThisSession = true
+        guard AppleSpeechSttClient.isReadyForHotSwap() else {
+            // 权限没给过 / 端侧资产没装：中途弹权限框或触发几百 MB 下载比慢更糟。
+            // 留在 Deepgram（慢但在工作），只记日志供复盘。
+            NSLog("[live] STT finals are slow but Apple on-device isn't ready — staying on Deepgram")
+            return
+        }
+        NSLog("[live] STT finals too slow — hot-swapping to Apple on-device (ja-JP)")
+        let old = stt
+        let apple = AppleSpeechSttClient()
+        attachSttHandlers(apple)
+        do { try apple.start() } catch {
+            NSLog("[live] Apple STT failed to start (%@) — staying on Deepgram",
+                  String(describing: error))
+            return
+        }
+        // 先改道再停旧引擎：缝隙里最多丢极短的一段音频，绝不出现双引擎各出一份终稿。
+        routeAudio(to: apple)
+        old?.stop()
+        stt = apple
+        sttHealth.reset()
+        // 状态行短暂告知（与 creditLow 同一模式）：几秒后若没被新回合盖掉就回聆听态。
+        notch.model.message = .sttSwitchedLocal
+        sttSwitchRevertWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.recording,
+                  self.notch.model.message == .sttSwitchedLocal else { return }
+            self.notch.model.message = .listening
+        }
+        sttSwitchRevertWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
     }
 
     /// UI-only scripted smoke test (no pipeline).
