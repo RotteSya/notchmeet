@@ -76,4 +76,26 @@ enum NotchPresentation {
         if message == .sttError, let errorDetail { return errorDetail }  // SttError.localizedDescription is a full localized sentence
         return strings.runtimeMessage(message)
     }
+
+    /// 头部状态行的唯一决策点（审计 R3）。
+    ///
+    /// `text` 的契约是「answer 非空即原样返回」，于是流已提交后中途断开时，
+    /// TurnManager 写入的 `errorDetail`（「这段回答可能不完整」）曾经**永远**渲染
+    /// 不出来——正文被答案占着，状态行又只看 message（断流收尾时是 .completed
+    /// 「可直接作答」）。半截答案标着「可直接作答」，候选人会照着念到一半哑场。
+    /// 现在：answer 非空且带 errorDetail → 状态行以警告色显示警告本身。
+    /// 回看角标仍然最优先——「这是旧答案」比「可能不完整」更致命。
+    static func headerStatus(answer: String,
+                             message: RuntimeMessage,
+                             errorDetail: String?,
+                             review: AnswerModel.ReviewBadge?,
+                             strings: AppStrings) -> (text: String, warning: Bool) {
+        if let review {
+            return (strings.notchReviewing(position: review.position, count: review.count), true)
+        }
+        if let errorDetail, !answer.isEmpty {
+            return (errorDetail, true)
+        }
+        return (strings.notchStatus(message), false)
+    }
 }

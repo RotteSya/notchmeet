@@ -163,11 +163,14 @@ final class NotchView: NSView {
         collapsedREC.isHidden = !model.recording
         headerREC.isHidden = !model.recording
 
-        // 状态文字：交叉淡化换字，不生硬跳变。回看态用琥珀色顶掉常规状态——用户瞟一眼
-        // 就知道「这是之前的回答，不是现在该说的话」；只靠正文没有任何区别是不可接受的。
-        statusText.textColor = model.review == nil ? NotchPalette.primary : NotchPalette.warning
-        let newStatus = model.review.map { s.notchReviewing(position: $0.position, count: $0.count) }
-            ?? s.notchStatus(model.message)
+        // 状态文字：交叉淡化换字，不生硬跳变。回看态与「可能不完整」警告用琥珀色顶掉
+        // 常规状态（决策集中在 NotchPresentation.headerStatus，可测）——用户瞟一眼就知道
+        // 「这是之前的回答」或「这段回答可能不完整」；只靠正文没有任何区别是不可接受的。
+        let header = NotchPresentation.headerStatus(answer: model.answer, message: model.message,
+                                                    errorDetail: model.errorDetail,
+                                                    review: model.review, strings: s)
+        statusText.textColor = header.warning ? NotchPalette.warning : NotchPalette.primary
+        let newStatus = header.text
         if newStatus != displayedStatusText && newStatus != pendingStatusText {
             pendingStatusText = newStatus
             if reduceMotion || displayedStatusText.isEmpty {
