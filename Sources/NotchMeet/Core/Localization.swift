@@ -6,10 +6,24 @@ enum UILanguage: String, CaseIterable {
     case ja
 }
 
-enum InterviewLanguage: String {
+enum InterviewLanguage: String, CaseIterable {
     case japanese = "ja"
+    case chinese = "zh"
 
-    var deepgramCode: String { rawValue }
+    var deepgramCode: String {
+        switch self {
+        case .japanese: "ja"
+        case .chinese: "zh-CN"
+        }
+    }
+
+    /// `SFSpeechRecognizer` 的端侧识别 locale。
+    var appleLocaleID: String {
+        switch self {
+        case .japanese: "ja-JP"
+        case .chinese: "zh-CN"
+        }
+    }
 }
 
 enum RuntimeMessage: Equatable {
@@ -76,11 +90,23 @@ struct AppStrings {
     /// Prefix for the recognized-question line in the notch (lets the user catch a mis-hear).
     var heardLabel: String { pick("听到", "聞き取り") }
     var settings: String { pick("设置", "設定") }
-    var interviewLanguageName: String { pick("日语", "日本語") }
+    var interviewLanguageName: String { interviewLanguageName(Settings.interviewLanguage) }
+    func interviewLanguageName(_ lang: InterviewLanguage) -> String {
+        switch lang {
+        case .japanese: pick("日语", "日本語")
+        case .chinese: pick("中文", "中国語")
+        }
+    }
     var uiLanguageName: String { language == .zh ? "中文" : "日本語" }
     var languageSummaryLabel: String { pick("语言", "言語") }
     var languageSummaryValue: String {
-        pick("界面：中文 · 面试与回答：日语", "画面：日本語・面接と回答：日本語")
+        pick("界面：\(uiLanguageName) · 面试与回答：\(interviewLanguageName)",
+             "画面：\(uiLanguageName)・面接と回答：\(interviewLanguageName)")
+    }
+    var interviewLanguageLabel: String { pick("面试语言", "面接の言語") }
+    var interviewLanguageHelp: String {
+        pick("面试官提问与生成回答所用的语言。语音识别与 AI 回答都会切换；下一次开始录音时生效。",
+             "面接官の質問と回答生成に使う言語。音声認識と AI の回答が切り替わります（次の録音開始から有効）。")
     }
 
     func runtimeMessage(_ message: RuntimeMessage) -> String {
@@ -241,16 +267,16 @@ struct AppStrings {
     // MARK: STT 引擎选择
     var sttEngineLabel: String { pick("语音识别引擎", "音声認識エンジン") }
     var sttEngineHelp: String {
-        pick("国内网络下推荐「Apple 本地」：离线日语识别，无需联网、无需 Deepgram Key。",
-             "中国本土のネットワークでは「Apple（オンデバイス）」を推奨：オフライン日本語認識で、通信も Deepgram キーも不要です。")
+        pick("国内网络下推荐「Apple 本地」：离线\(interviewLanguageName)识别，无需联网、无需 Deepgram Key。",
+             "中国本土のネットワークでは「Apple（オンデバイス）」を推奨：オフライン\(interviewLanguageName)認識で、通信も Deepgram キーも不要です。")
     }
     var sttEngineAuto: String { pick("自动", "自動") }
     var sttEngineDeepgram: String { pick("Deepgram 云端", "Deepgram（クラウド）") }
     var sttEngineApple: String { pick("Apple 本地（离线）", "Apple（オンデバイス）") }
 
     var sttLocalUnavailable: String {
-        pick("本地日语识别不可用：请在 系统设置 → 键盘 → 听写 中启用日语后重试。",
-             "オンデバイス日本語認識が利用できません：システム設定 → キーボード → 音声入力 で日本語を有効化してから再試行してください。")
+        pick("本地\(interviewLanguageName)识别不可用：请在 系统设置 → 键盘 → 听写 中启用\(interviewLanguageName)后重试。",
+             "オンデバイス\(interviewLanguageName)認識が利用できません：システム設定 → キーボード → 音声入力 で\(interviewLanguageName)を有効化してから再試行してください。")
     }
     var sttNotAuthorized: String {
         pick("未授权语音识别：请在 系统设置 → 隐私与安全性 → 语音识别 中允许 NotchMeet。",
@@ -262,10 +288,10 @@ struct AppStrings {
         pick("语音识别服务连接失败，已停止重试。请检查网络与 Deepgram 密钥后重新开始。（\(detail)）",
              "音声認識サービスに接続できず、再試行を停止しました。ネットワークと Deepgram キーをご確認のうえ、再度開始してください。（\(detail)）")
     }
-    /// 端侧日语语音模型按需下载中的进度提示（下载完成后自动开始识别）。
+    /// 端侧语音模型按需下载中的进度提示（下载完成后自动开始识别）。
     func sttModelDownloading(_ percent: Int) -> String {
-        pick("正在下载日语语音模型（\(percent)%）…完成后会自动开始识别。",
-             "日本語の音声モデルをダウンロード中（\(percent)%）…完了後に自動で認識を開始します。")
+        pick("正在下载\(interviewLanguageName)语音模型（\(percent)%）…完成后会自动开始识别。",
+             "\(interviewLanguageName)の音声モデルをダウンロード中（\(percent)%）…完了後に自動で認識を開始します。")
     }
 
     func captureHealth(_ state: CaptureHealthState) -> String {
@@ -546,8 +572,8 @@ struct AppStrings {
     var back: String { pick("返回", "戻る") }
     var scriptsEmptyTitle: String { pick("还没有面试原稿", "面接原稿がありません") }
     var scriptsEmptyHint: String {
-        pick("导入或粘贴你写好的面试答案：命中问题时逐字提示，未命中时作为日语回答的参考。",
-             "用意した回答を読み込むか貼り付けてください。一致した質問では原稿をそのまま提示し、外れた場合は日本語回答の参考にします。")
+        pick("导入或粘贴你写好的面试答案：命中问题时逐字提示，未命中时作为\(interviewLanguageName)回答的参考。",
+             "用意した回答を読み込むか貼り付けてください。一致した質問では原稿をそのまま提示し、外れた場合は\(interviewLanguageName)回答の参考にします。")
     }
     func scriptCount(_ n: Int) -> String { pick("\(n) 个问题", "\(n) 件") }
     func scriptUpdated(_ date: String) -> String { pick("更新于 \(date)", "更新 \(date)") }
@@ -641,8 +667,8 @@ struct AppStrings {
     }
 
     var prepDescription: String {
-        pick("使用标题、编号、Q: 或问题句自动分隔（例如“# 自我介绍”“1. 应聘动机”）。请准备日语回答；匹配时显示原稿，未匹配时作为日语回答的参考。",
-             "見出し・番号・「Q:」・質問文で自動的に区切ります（例:「# 自己紹介」「1. 志望動機」）。一致した質問では原稿をそのまま提示し、外れた場合は日本語回答の参考にします。")
+        pick("使用标题、编号、Q: 或问题句自动分隔（例如“# 自我介绍”“1. 应聘动机”）。请准备\(interviewLanguageName)回答；匹配时显示原稿，未匹配时作为\(interviewLanguageName)回答的参考。",
+             "見出し・番号・「Q:」・質問文で自動的に区切ります（例:「# 自己紹介」「1. 志望動機」）。一致した質問では原稿をそのまま提示し、外れた場合は\(interviewLanguageName)回答の参考にします。")
     }
     var saveWithShortcut: String { pick("保存  ⌘S", "保存  ⌘S") }
     var aiNormalize: String { pick("AI 整理格式", "AIで整形") }

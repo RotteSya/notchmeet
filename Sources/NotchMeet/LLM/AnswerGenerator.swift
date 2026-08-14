@@ -5,6 +5,9 @@ struct GenRequest {
     let question: String
     let context: String   // structured-fact / resume grounding (Phase 1)
     let history: String   // recent Q + prior *suggested* answers for 深掘り dedup; not verbatim candidate speech
+    /// 本回合的面试语言。由 TurnManager 从**会话快照**填入，而不是各生成器在发请求时
+    /// 各自读全局设置——面试中途改设置时，system/user/history 三者必须仍是同一种语言。
+    var language: InterviewLanguage = Settings.interviewLanguage
 }
 
 /// Streams a natural, speakable answer as text deltas. Cancellation is via the surrounding Task

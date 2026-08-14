@@ -14,8 +14,8 @@ final class GeminiAnswerGenerator: AnswerGenerator {
         let urlStr = "\(GeminiEndpoint.host)/\(model):streamGenerateContent?alt=sse"
         guard let url = URL(string: urlStr) else { throw LLMError.badURL }
         let body: [String: Any] = [
-            "systemInstruction": ["parts": [["text": Prompts.system(context: req.context)]]],
-            "contents": [["role": "user", "parts": [["text": Prompts.user(question: req.question, history: req.history)]]]],
+            "systemInstruction": ["parts": [["text": Prompts.system(context: req.context, language: req.language)]]],
+            "contents": [["role": "user", "parts": [["text": Prompts.user(question: req.question, history: req.history, language: req.language)]]]],
             // thinkingBudget:0 disables 2.5-Flash "thinking" — critical for first-token latency.
             "generationConfig": ["temperature": 0.5, "maxOutputTokens": 512,
                                  "thinkingConfig": ["thinkingBudget": 0]],

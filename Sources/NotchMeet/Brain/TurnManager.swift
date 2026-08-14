@@ -91,6 +91,10 @@ final class TurnManager: @unchecked Sendable {
         didSet { if paused { cancelSettle() } }   // 録音停止/デモ中: 聞きかけの発話を捨てる
     }
 
+    /// 本场会话的面试语言快照。armLive 装配时定死，与同场 STT 引擎的语言同源——
+    /// 面试中途改设置只影响下一次开始录音，绝不让 prompts/history/门控在半场换语言。
+    var interviewLanguage: InterviewLanguage = .japanese
+
     init(model: AnswerModel,
          generator: AnswerGenerator,
          knowledge: KnowledgeProvider = NullKnowledge(),
@@ -183,19 +187,35 @@ final class TurnManager: @unchecked Sendable {
     /// interviewer who just stated a view is almost always still building toward the real question,
     /// so it gets the long window and we fold the question into the same turn. This distinction —
     /// "sentence-complete" ≠ "turn-complete" — is the core of the over-splitting fix.
-    private func looksLikeCompletedPrompt(_ s: String) -> Bool {
+    func looksLikeCompletedPrompt(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = t.last else { return false }
         if "？?".contains(last) { return true }                    // explicit question mark
         // strip trailing sentence punctuation, then inspect the real ending
-        let core = t.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、…!！?？"))
+        let core = t.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、，…!！?？"))
         guard let c = core.last else { return false }
-        if c == "か" { return true }                               // …ですか／…ましたか／…でしょうか
-        // direct requests / imperatives that ARE a prompt to answer now
-        for tail in ["ください", "下さい", "お願いします", "お願いいたします"] {
-            if core.hasSuffix(tail) { return true }
+        switch interviewLanguage {
+        case .japanese:
+            if c == "か" { return true }                           // …ですか／…ましたか／…でしょうか
+            // direct requests / imperatives that ARE a prompt to answer now
+            for tail in ["ください", "下さい", "お願いします", "お願いいたします"] {
+                if core.hasSuffix(tail) { return true }
+            }
+            return false
+        case .chinese:
+            // 端侧 zh-CN 终稿常无「？」（Apple 引擎是国内推荐路径），只靠问号会让
+            // 每个中文问题都吃满长 settle 窗口。语气助词与疑问词结尾 = 交棒。
+            for tail in ["吗", "呢", "多少", "什么", "为什么", "怎么样", "如何",
+                         "哪些", "哪里", "是谁", "怎么办"] {
+                if core.hasSuffix(tail) { return true }
+            }
+            // 祈使型提问（「请介绍一下你自己」「请谈谈你的项目」）。
+            if core.hasPrefix("请"),
+               ["介绍", "谈", "说", "讲", "描述", "分享", "举"].contains(where: core.contains) {
+                return true
+            }
+            return false
         }
-        return false
     }
 
     private func cancelSettle() {
@@ -238,9 +258,9 @@ final class TurnManager: @unchecked Sendable {
     /// Backchannel / greeting / too-short filter so 「なるほど」 や単独の「よろしくお願いします」 が
     /// 答えを誘発しないようにする（§6）。末尾の句読点を外してから照合するので「なるほど。」「なるほど！」
     /// もまとめて弾く。長さ判定は元テキストのまま（terse な質問「強みは？」を巻き込まない）。
-    private func isMeaningfulQuestion(_ q: String) -> Bool {
+    func isMeaningfulQuestion(_ q: String) -> Bool {
         if q.count < 4 { return false }
-        let core = q.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、…!！?？"))
+        let core = q.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、，…!！?？"))
         let skip: Set<String> = [
             "はい", "ええ", "うん", "そうですね", "なるほど", "なるほどですね",
             "了解", "オーケー", "わかりました", "承知しました", "いいですね",
@@ -249,8 +269,18 @@ final class TurnManager: @unchecked Sendable {
             "本日はよろしくお願いします", "それではよろしくお願いします",
             "ありがとうございます", "ありがとうございました",
             "お願いします", "失礼します", "失礼いたします",
+            // 中文寒暄/附和（超过 4 字长度闸的那些；更短的被长度闸挡住）。
+            // 不滤掉这些，每一句「好的，我明白了」都会取消在途生成、烧一次计费调用，
+            // 并把垃圾回合写进 history 污染下一问的去重与 grounding。
+            "好的好的", "对对对", "明白了", "我明白了", "好的我明白了", "好的明白了",
+            "谢谢", "谢谢你", "谢谢您", "谢谢您的回答", "谢谢您的分享",
+            "非常好", "很好", "没问题", "收到",
+            "那我们开始吧", "我们开始吧", "那我们继续", "好的我们继续", "辛苦了",
         ]
-        return !skip.contains(core)
+        // 中文寒暄常带句中逗号（「好的，我明白了」），首尾 trim 够不到——查表前
+        // 把句内顿逗一并去掉。日语表目本身不含标点，此归一化对日语无影响。
+        let compact = String(core.filter { !"、，,　 ".contains($0) })
+        return !skip.contains(core) && !skip.contains(compact)
     }
 
     private func startTurn(question: String) {
@@ -284,7 +314,8 @@ final class TurnManager: @unchecked Sendable {
         // 而这条路径全在本机、一个字节都不出网。关掉隐私开关的用户恰恰最需要这类即答，
         // 拿它当门会把功能反向关掉。
         if let facts = knowledge as? FactStore,
-           let quick = FactQuickAnswer.answer(for: question, facts: facts) {
+           let quick = FactQuickAnswer.answer(for: question, facts: facts,
+                                              language: interviewLanguage) {
             // startTurn 本身非隔离，但本类的契约是「所有状态与 model 写入都串行在主队列上」
             // （见类型注释）；commitAnswer 已按该契约标了 @MainActor。
             MainActor.assumeIsolated {
@@ -340,7 +371,8 @@ final class TurnManager: @unchecked Sendable {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
         }
-        let req = GenRequest(question: question, context: ctx, history: hist)
+        let req = GenRequest(question: question, context: ctx, history: hist,
+                             language: interviewLanguage)
         liveTask = Task { [weak self] in
             await self?.runLive(req, myEpoch: myEpoch)
         }
@@ -355,7 +387,17 @@ final class TurnManager: @unchecked Sendable {
     private func routeCandidates(for question: String) -> [BankEntry] {
         guard Settings.sendContextToLLM else { return [] }
         var cands = scriptStore?.candidates(for: question) ?? []
-        if let bank { cands += bank.candidates(for: question) }
+        // 预生成库整库带语言戳：与本场语言不一致就跳过——路由 prompt 明示「措辞不同
+        // 也算 match」，日语库的候选在中文面试里是真实可命中的，命中即整段日语逐字
+        // 上屏。用户手写原稿（scriptStore）不受此闸：写什么语言是用户自己的决定。
+        if let bank {
+            if Settings.answerBankLanguage == interviewLanguage {
+                cands += bank.candidates(for: question)
+            } else if !bank.candidates(for: question).isEmpty {
+                NSLog("[router] answer bank is %@ but session is %@ — bank skipped (rebuild via 预生成回答)",
+                      Settings.answerBankLanguage.rawValue, interviewLanguage.rawValue)
+            }
+        }
         return Array(cands.prefix(5))
     }
 
@@ -522,7 +564,13 @@ final class TurnManager: @unchecked Sendable {
         guard !history.isEmpty else { return "" }
         // Labels mark provenance honestly: 面接官 is what STT actually heard; 回答案 is the answer
         // WE suggested last turn — not necessarily what the candidate said (the app never hears them).
-        return history.suffix(4).map { "面接官: \($0.q)\n回答案: \($0.a)" }.joined(separator: "\n\n")
+        // 标签必须与 Prompts.user 里解释这两个标签的文案同语言（中文版是「面试官/建议回答」）。
+        let (qLabel, aLabel): (String, String)
+        switch interviewLanguage {
+        case .japanese: (qLabel, aLabel) = ("面接官", "回答案")
+        case .chinese: (qLabel, aLabel) = ("面试官", "建议回答")
+        }
+        return history.suffix(4).map { "\(qLabel): \($0.q)\n\(aLabel): \($0.a)" }.joined(separator: "\n\n")
     }
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {

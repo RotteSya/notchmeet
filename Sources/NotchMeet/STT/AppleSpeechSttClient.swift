@@ -51,7 +51,7 @@ final class AppleSpeechSttClient: NSObject, SttClient {
         return true
     }
 
-    /// 产品固定 ja-JP（见 spec 非目标）；保留以满足协议。
+    /// 识别语言在 init 时随 `Settings.interviewLanguage` 定死，会话中不切换；保留以满足协议。
     func setLanguage(_ lang: String) {}
 
     func start() throws {

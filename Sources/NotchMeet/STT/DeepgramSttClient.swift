@@ -75,6 +75,15 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
         self.language = language
     }
 
+    /// 按识别语言选 boost 词表。中文暂不下发（nova-2 的 zh-CN 关键词支持未经实测，
+    /// 出错的形态是握手被拒 → 中文用户云端 STT 直接连不上，比没有加成严重得多）。
+    static func boostKeywords(for language: String) -> [String] {
+        guard language.hasPrefix("ja") else { return [] }
+        return ["御社", "志望動機", "志望理由", "自己紹介", "ガクチカ", "学生時代",
+                "強み", "弱み", "長所", "短所", "きっかけ", "外食産業", "人手不足",
+                "課題", "達成", "努力", "チーム", "リーダー", "逆質問", "キャリア"]
+    }
+
     deinit {
         session?.invalidateAndCancel()
     }
@@ -146,10 +155,11 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
         ]
         // nova-2 keyword boosting (legacy `keywords` param; nova-3's `keyterm` is a different
         // feature) — bias toward 就活 domain vocab (御社/志望動機/外食産業…).
-        let keywords = ["御社", "志望動機", "志望理由", "自己紹介", "ガクチカ", "学生時代",
-                        "強み", "弱み", "長所", "短所", "きっかけ", "外食産業", "人手不足",
-                        "課題", "達成", "努力", "チーム", "リーダー", "逆質問", "キャリア"]
-        c.queryItems? += keywords.map { URLQueryItem(name: "keywords", value: $0) }
+        // 关键词必须与识别语言同语种：给 zh-CN 的声学偏置塞日语词，轻则零加成，
+        // 重则把中文语音里蹦出片假名碎片、甚至被服务端拒参——非日语一律不下发。
+        c.queryItems? += Self.boostKeywords(for: language).map {
+            URLQueryItem(name: "keywords", value: $0)
+        }
         guard let url = c.url else { onError?(LLMError.badURL); return }
 
         if session == nil {

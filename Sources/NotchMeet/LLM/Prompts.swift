@@ -2,8 +2,18 @@ import Foundation
 
 /// 就活 system/user prompts. Produces a complete spoken answer the candidate can read
 /// aloud verbatim, grounded in supplied facts and never formatted as notes or bullets.
+/// 日中双语：面试语言由 `Settings.interviewLanguage` 决定，两个版本承载同一套约束
+/// （多问逐答 / 不复读要深挖 / 只用事实 / 原稿最优先但不许换经历 / 只输出口语正文）。
 enum Prompts {
-    static func system(context: String) -> String {
+    static func system(context: String,
+                       language: InterviewLanguage = Settings.interviewLanguage) -> String {
+        switch language {
+        case .japanese: systemJa(context: context)
+        case .chinese: systemZh(context: context)
+        }
+    }
+
+    private static func systemJa(context: String) -> String {
         let base = """
         あなたは日本の新卒就活の面接を支援するリアルタイム・プロンプターです。
         面接官の質問に対し、候補者がそのまま声に出して答えられる、完成した回答文を作成します。
@@ -24,7 +34,36 @@ enum Prompts {
         return base + "\n" + roleLine + "\n\n# 事実情報（ES/自己分析）\n" + ctx
     }
 
-    static func user(question: String, history: String) -> String {
+    private static func systemZh(context: String) -> String {
+        let base = """
+        你是一名支持中文面试的实时提词器。
+        针对面试官的提问，写出候选人可以直接照着说出口的完整回答。
+
+        必须遵守:
+        - 自然、礼貌的连续口语（称呼对方用「您」「贵司」），按问题需要 2〜5 句、120〜260 字左右。
+        - 禁止条目、编号、标题、Markdown、开场白、解释、任何元话语。
+        - 问题里包含多个问题时（「……另外……」「有两个问题」「顺便也……」等），按被问到的顺序逐一简洁作答，不许只答其中一个而漏掉其余。此时可以超出上面的字数上限（但仍不许变成条目，要用口语自然衔接）。
+        - 先说结论，需要时自然带出具体例子和入职后的贡献。
+        - 「此前的对话」里已经说过的成果、数字、事例不再重复。同一话题被追问时，用一句话承接前提，再补充新的角度（具体行动、方法、困难、收获）。
+        - 只以「事实信息」里写明的内容为依据，不编造数字、经历、专有名词。
+        - 「用户准备的回答」里有与问题对得上的条目时，其文面与长度最优先，不许擅自概括或改写（原稿优先于上面的句数与字数上限）。但即使标题相似，讲的是与「此前的对话」**不同经历、不同语境**的原稿不许使用——问题指向刚才的回答内容时，优先衔接那段内容。
+        - 事实不足时用通用的说法带过，不捏造。
+        - 只用中文输出。
+        """
+        let roleLine = "模式: 综合岗位。让人品、一致性、求职意愿被听见。"
+        let ctx = context.isEmpty ? "（尚未登记事实信息。按通用套路支持）" : context
+        return base + "\n" + roleLine + "\n\n# 事实信息（简历/自我分析）\n" + ctx
+    }
+
+    static func user(question: String, history: String,
+                     language: InterviewLanguage = Settings.interviewLanguage) -> String {
+        switch language {
+        case .japanese: userJa(question: question, history: history)
+        case .chinese: userZh(question: question, history: history)
+        }
+    }
+
+    private static func userJa(question: String, history: String) -> String {
         var s = ""
         if !history.isEmpty {
             // The 面接官 lines are the questions actually heard; the 回答案 lines are answers WE
@@ -50,6 +89,33 @@ enum Prompts {
             }
         }
         s += "# 面接官の質問\n\(question)\n\nそのまま声に出して答えられる、自然で完成した回答文だけを出力してください。"
+        return s
+    }
+
+    private static func userZh(question: String, history: String) -> String {
+        var s = ""
+        if !history.isEmpty {
+            // 「面试官」是实际听到的问题；「建议回答」是我们此前上屏的文面——候选人未必照读，
+            // 所以它是参考而非逐字记录。标签必须与 TurnManager.historyBlock 的中文标签一致。
+            s += """
+            # 此前的对话（最近几轮问答）
+            「面试官」是实际被问到的问题，「建议回答」是你刚才给出的文面（候选人不一定照着说了）。已经提过的成果、数字、事例不要重复；同一话题继续时，用一句话承接前提，再从新的角度深入。
+
+            \(history)
+            """
+            s += "\n\n"
+            // 指代型追问：不点明「它/这个」指什么，模型会滑向准备稿里标题相似、
+            // 却讲另一段经历的条目——与日语版同一事故的中文防线。
+            if LLMRouter.isDeictic(question) {
+                s += """
+                # 重要
+                问题里的「它、这个、刚才的」指的是上一条「建议回答」里讲的内容。请用一句话承接刚才回答里的经历与收获，把它衔接到问题的角度（如何用在贵司、能做什么贡献等）来回答。即使准备的回答里有标题相似的条目，**也不许换成讲另一段经历的文面**。
+
+                """
+                s += "\n"
+            }
+        }
+        s += "# 面试官的问题\n\(question)\n\n请只输出可以直接照着说出口的、自然完整的回答正文。"
         return s
     }
 }

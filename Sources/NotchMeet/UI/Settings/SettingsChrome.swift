@@ -110,6 +110,12 @@ final class SettingsRoot: NSView {
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.applyLanguage() }
+
+        // 面试语言切换：同一条重建路径——通用页的语言摘要与 STT 帮助文案引用了它。
+        // 异步一拍：同步重建会在分段控件自己的 action 回调里把控件销毁。
+        NotificationCenter.default.addObserver(
+            forName: .nmInterviewLanguageChanged, object: nil, queue: .main
+        ) { [weak self] _ in DispatchQueue.main.async { self?.applyLanguage() } }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
