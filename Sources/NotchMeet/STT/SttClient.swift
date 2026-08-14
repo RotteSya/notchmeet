@@ -20,10 +20,16 @@ protocol SttClient: AnyObject {
     /// Feed 16 kHz mono PCM16 little-endian audio (the interviewer channel).
     func write(_ pcm: Data)
     func setLanguage(_ lang: String)
+    /// 用户域名词热词（公司名/职务/技能）。专有名词误识是命中链最上游的死因——
+    /// 公司名一旦听错，路由/匹配/grounding 全部救不回。各引擎按自己的机制吃：
+    /// Apple → contextualStrings（端侧，不出网）；Deepgram → keywords boost（仅日语，
+    /// zh-CN 的关键词支持未实测、误下发可能拒握手）。默认空实现（mock 不用管）。
+    func setVocabulary(_ terms: [String])
 }
 
 extension SttClient {
     func setLanguage(_ lang: String) {}
+    func setVocabulary(_ terms: [String]) {}
     func write(_ pcm: Data) {}
     var isConnected: Bool { false }
 }

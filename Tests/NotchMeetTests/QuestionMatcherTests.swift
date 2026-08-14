@@ -111,4 +111,32 @@ final class QuestionMatcherTests: XCTestCase {
         let result = QuestionMatcher.ranked(entries, for: "休日", limit: 2)
         XCTAssertEqual(result.map(\.question), ["趣味", "特技"])
     }
+
+    // MARK: - 中文命中
+
+    /// 中文话题别名桥接：「谈谈你的职业规划」与话题式标题「职业规划」零字面重叠之外
+    /// 全靠 career 别名组——该组此前一个中文别名都没有。
+    func testChineseCareerAliasBridgesToTopicHeading() {
+        let entries = [entry("自我介绍"), entry("期望薪资"), entry("职业规划"), entry("反向提问")]
+        let result = QuestionMatcher.ranked(entries, for: "谈谈你未来三年的职业规划。", limit: 1)
+        XCTAssertEqual(result.first?.question, "职业规划")
+    }
+
+    /// 逆质问的中文真实问法「你有什么想问我们的吗」必须命中「反向提问」条目
+    /// （旧表只有「反向提问」四字本身，日语别名的「質問」是繁体、与简体零重叠）。
+    func testChineseReverseQuestionPhrasingHitsTheEntry() {
+        let entries = [entry("自我介绍"), entry("职业规划"), entry("反向提问")]
+        let result = QuestionMatcher.ranked(entries, for: "最后，你有什么想问我们的吗？", limit: 1)
+        XCTAssertEqual(result.first?.question, "反向提问")
+    }
+
+    /// 全角拉丁归一：中日 IME 常产出「ＴＯＥＩＣ」，必须与表里的 `toeic` 对上；
+    /// 片假名不受影响（不能用 Foundation 的 fullwidth transform）。
+    func testFullwidthLatinNormalizesToASCII() {
+        XCTAssertEqual(QuestionMatcher.normalized("ＴＯＥＩＣの点数"), "toeicの点数")
+        XCTAssertEqual(QuestionMatcher.normalized("ガクチカ"), "ガクチカ")
+        let entries = [entry("语言能力"), entry("自我介绍")]
+        let result = QuestionMatcher.ranked(entries, for: "你的ＴＯＥＩＣ成绩是多少？", limit: 1)
+        XCTAssertEqual(result.first?.question, "语言能力")
+    }
 }

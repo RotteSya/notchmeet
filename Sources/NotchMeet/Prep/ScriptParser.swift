@@ -208,8 +208,16 @@ enum ScriptParser {
     }
 
     private static func isKnownTopic(_ value: String) -> Bool {
-        let key = compact(value).lowercased()
-        let topics: Set<String> = [
+        knownTopics.contains(compact(value).lowercased())
+    }
+
+    /// 话题短行白名单。中日两份 `Intents.list` 是种子——预生成回答按它出标题，用户照抄
+    /// 当话题行写稿，这里认不出就等于稿子白准备（且改 Intents 不改这里的漂移是静默的，
+    /// 手抄副本在写下「已对齐」的同一次提交里就漏了 5 条）。种子之外只保留少量口语变体；
+    /// 通用四字名词（项目经历/团队合作/兴趣爱好…之外的自造项）不要加：本分支没有
+    /// `previousIsBlank` 段落护栏，太泛的词会把答案正文里的小标签行提升成标题、劈开条目。
+    private static let knownTopics: Set<String> = {
+        var topics: Set<String> = [
             "自己紹介", "自己pr", "志望動機", "志望理由", "応募理由", "ガクチカ",
             "学生時代に力を入れたこと", "学生時代に頑張ったこと", "強み", "弱み",
             "長所", "短所", "逆質問", "就活の軸", "企業選びの軸", "キャリアプラン",
@@ -217,10 +225,15 @@ enum ScriptParser {
             "失敗経験", "成功体験", "チーム経験", "リーダー経験", "他社選考状況",
             "希望職種", "入社後にしたいこと", "転勤について", "自己评价", "自我介绍",
             "应聘动机", "志愿理由", "优点", "缺点", "反向提问", "careerplan",
-            "selfintroduction", "motivation", "strengths", "weaknesses"
+            "selfintroduction", "motivation", "strengths", "weaknesses",
+            // 中文口语变体（Intents 正名之外用户常写的形）。
+            "学生经历", "挫折经历", "期望薪资", "到岗时间",
         ]
-        return topics.contains(key)
-    }
+        for intent in Intents.list(for: .japanese) + Intents.list(for: .chinese) {
+            topics.insert(compact(intent).lowercased())
+        }
+        return topics
+    }()
 
     /// A line counts as a question ONLY when it ENDS like one (…か／？／依頼形) or
     /// opens with an interrogative marker in Chinese. Substring signals (なぜ/どのよう
@@ -237,10 +250,18 @@ enum ScriptParser {
         guard !closingTails.contains(where: core.hasSuffix) else { return false }
         if text.hasSuffix("?") || text.hasSuffix("？") { return true }
         if core.hasSuffix("か") { return true }        // …ですか／…でしょうか／…のか
+        // 「呢」刻意不收：它同时是延续语气助词，中文答案正文的段首句常以它收尾
+        // （「要说最大的收获呢」），后缀判定会把该行提升成标题、腰斩条目——与上方
+        // 注释记录的旧误爆同型。「吗」几乎专职疑问，保留。
         let requestTails = ["ください", "下さい", "お願いします", "お願いいたします",
                             "是什么", "吗"]
         if requestTails.contains(where: core.hasSuffix) { return true }
-        let interrogativePrefixes = ["请", "为什么", "如何"]
+        // 中文问题行常以祈使动词开头（「谈谈你的职业规划」「介绍一下你自己」）。
+        // 祈使前缀锚定第二人称/「自己」：答案正文段落也会以「说说我自己的体会…」
+        // 起头，无锚定的裸动词前缀会把它提升成标题。
+        let interrogativePrefixes = ["请", "为什么", "如何", "谈谈你", "说说你", "讲讲你",
+                                     "聊聊你", "介绍一下你", "介绍一下自己",
+                                     "描述一下你", "分享一下你"]
         return interrogativePrefixes.contains(where: core.hasPrefix)
     }
 

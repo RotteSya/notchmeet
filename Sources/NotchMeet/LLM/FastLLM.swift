@@ -4,11 +4,13 @@ import Foundation
 /// `ProviderRegistry.llmResolution()` so the router always talks to the same (reachable)
 /// backend as live generation — 国内即域内服务，避免 router 卡在被墙端点上超时。
 enum FastLLM {
-    static func complete(system: String, user: String, maxTokens: Int = 600) async throws -> String {
+    /// `resolution` 缺省时跟随 `llmResolution()`（主选）；预热降级链候补时显式传入。
+    static func complete(system: String, user: String, maxTokens: Int = 600,
+                         resolution: LLMResolution? = nil) async throws -> String {
         // 一次性解析 (resolution, key)。旧实现先由 llmResolution() 判断 key 存在，
         // 再各自独立取值并 `!` 强制解包：两次读 Keychain 之间 key 被清除，或重签名后
         // ACL 弹框被用户点「拒绝」，第二次读返回 nil —— 面试中直接崩溃。
-        let resolution = ProviderRegistry.llmResolution()
+        let resolution = resolution ?? ProviderRegistry.llmResolution()
         guard let keyName = ProviderRegistry.keyName(for: resolution),
               let key = Settings.apiKey(keyName), !key.isEmpty else {
             throw LLMError.missingKey

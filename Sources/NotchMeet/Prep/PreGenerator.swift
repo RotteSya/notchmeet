@@ -76,15 +76,16 @@ final class PreGenerator {
     ///
     /// 此前这里无条件读 facts。当时没有 facts 写入口、事实恒为空，所以漏不出东西；
     /// 简历事实编辑器上线后，它就变成一条真实的泄漏路径了。
-    static func groundingContext(_ facts: FactStore) -> String {
-        Settings.sendContextToLLM ? facts.context(for: "") : ""
+    static func groundingContext(_ facts: FactStore,
+                                 language: InterviewLanguage) -> String {
+        Settings.sendContextToLLM ? facts.context(for: "", language: language) : ""
     }
 
     /// Generate the bank. `progress` is called on completion of each intent.
     func generate(progress: ((Int, Int) -> Void)? = nil) async {
         let language = Settings.interviewLanguage
         let intents = Intents.list(for: language)
-        let context = Self.groundingContext(facts)
+        let context = Self.groundingContext(facts, language: language)
         let engine = Self.resolveEngine()
         var out: [BankEntry] = []
 

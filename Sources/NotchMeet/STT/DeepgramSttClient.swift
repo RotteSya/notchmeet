@@ -84,6 +84,14 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
                 "課題", "達成", "努力", "チーム", "リーダー", "逆質問", "キャリア"]
     }
 
+    /// 用户域名词热词（SttClient.setVocabulary）。与静态就活词表同机制下发；
+    /// 语言闸同上——非日语一律不下发（见 connectLocked 的注释）。热词随下一次
+    /// 建连/重连生效：keywords 是握手参数，无法热更在飞的 socket。
+    func setVocabulary(_ terms: [String]) {
+        q.async { [weak self] in self?.userVocabulary = terms }
+    }
+    private var userVocabulary: [String] = []   // 只在 q 上访问
+
     deinit {
         session?.invalidateAndCancel()
     }
@@ -154,11 +162,16 @@ final class DeepgramSttClient: NSObject, SttClient, URLSessionWebSocketDelegate 
             .init(name: "vad_events", value: "true"),
         ]
         // nova-2 keyword boosting (legacy `keywords` param; nova-3's `keyterm` is a different
-        // feature) — bias toward 就活 domain vocab (御社/志望動機/外食産業…).
+        // feature) — bias toward 就活 domain vocab (御社/志望動機/外食産業…) + 用户自己的
+        // 公司名/技能词（setVocabulary）。
         // 关键词必须与识别语言同语种：给 zh-CN 的声学偏置塞日语词，轻则零加成，
-        // 重则把中文语音里蹦出片假名碎片、甚至被服务端拒参——非日语一律不下发。
-        c.queryItems? += Self.boostKeywords(for: language).map {
-            URLQueryItem(name: "keywords", value: $0)
+        // 重则把中文语音里蹦出片假名碎片、甚至被服务端拒参——非日语一律不下发，
+        // 用户词表同受此闸（中文用户的域内路径本来就是 Apple 端侧）。
+        if language.hasPrefix("ja") {
+            var seen = Set<String>()
+            let keywords = (Self.boostKeywords(for: language) + userVocabulary)
+                .filter { seen.insert($0).inserted }
+            c.queryItems? += keywords.map { URLQueryItem(name: "keywords", value: $0) }
         }
         guard let url = c.url else { onError?(LLMError.badURL); return }
 

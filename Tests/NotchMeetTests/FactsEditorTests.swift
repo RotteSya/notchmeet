@@ -192,7 +192,7 @@ final class FactsEditorTests: XCTestCase {
             入社可能時期: 20XX年4月
             """)))
 
-        let context = FactStore().context(for: "希望年収はどのくらいですか")
+        let context = FactStore().context(for: "希望年収はどのくらいですか", language: .japanese)
         XCTAssertTrue(context.contains("400万円"), "存下的事实必须进入生成上下文")
         XCTAssertTrue(context.contains("20XX年4月"))
     }
@@ -231,10 +231,10 @@ final class PreGeneratorPrivacyGateTests: XCTestCase {
         XCTAssertTrue(store.save(FactsTextFormat.parse("# メモ\n希望年収: 400万円")))
 
         Settings.sendContextToLLM = true
-        XCTAssertTrue(PreGenerator.groundingContext(FactStore()).contains("400万円"))
+        XCTAssertTrue(PreGenerator.groundingContext(FactStore(), language: .japanese).contains("400万円"))
 
         Settings.sendContextToLLM = false
-        XCTAssertTrue(PreGenerator.groundingContext(FactStore()).isEmpty,
+        XCTAssertTrue(PreGenerator.groundingContext(FactStore(), language: .japanese).isEmpty,
                       "关掉「把简历发给 AI」后，预生成也不得把简历送出去")
     }
 }

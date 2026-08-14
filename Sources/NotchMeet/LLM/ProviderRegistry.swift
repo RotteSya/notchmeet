@@ -24,15 +24,25 @@ enum ProviderRegistry {
         }
     }
 
-    /// 主选 provider 排头，其余持有 key 的按固定顺序顺延——供运行时降级。
-    /// 国内优先域内可直连服务的顺序由 `llmResolution()` 决定，这里只负责补齐候补。
-    static func makeGeneratorChain() -> (generators: [AnswerGenerator], names: [String]) {
+    /// 降级链的解析顺序：主选排头，其余持有 key 的按固定顺序顺延。
+    /// `makeGeneratorChain` 与预热共用**同一份**——order 数组各写一份的话，
+    /// 预热焐热 A 而看门狗实际切到 B 的漂移无声无息，症状恰是「降级那一问慢一秒」。
+    static func chainResolutions() -> [LLMResolution] {
         let primary = llmResolution()
+        guard primary != .none else { return [] }
         let order: [LLMResolution] = [.qwen, .deepseek, .gemini, .claude]
-        let ordered = [primary] + order.filter { $0 != primary }
+        return ([primary] + order.filter { $0 != primary }).filter { r in
+            guard let name = keyName(for: r), let key = Settings.apiKey(name), !key.isEmpty
+            else { return false }
+            return true
+        }
+    }
+
+    /// 国内优先域内可直连服务的顺序由 `llmResolution()` 决定，这里只负责建实例。
+    static func makeGeneratorChain() -> (generators: [AnswerGenerator], names: [String]) {
         var generators: [AnswerGenerator] = []
         var names: [String] = []
-        for resolution in ordered {
+        for resolution in chainResolutions() {
             guard let keyName = keyName(for: resolution),
                   let key = Settings.apiKey(keyName), !key.isEmpty,
                   let gen = generator(for: resolution, key: key) else { continue }
@@ -66,6 +76,12 @@ enum ProviderRegistry {
                             hasDeepSeek: Settings.apiKey("DEEPSEEK_API_KEY") != nil,
                             hasQwen: Settings.apiKey("DASHSCOPE_API_KEY") != nil,
                             inChina: Settings.isLikelyInChina())
+    }
+
+    /// 降级链上的第一位候补。预热要把它一起焐热：看门狗切换发生时现付 DNS+TLS
+    /// 的正是它。nil = 没有候补。
+    static func llmFallbackResolution() -> LLMResolution? {
+        chainResolutions().dropFirst().first
     }
 
     /// Display name for consent / health / settings; nil = no LLM configured.

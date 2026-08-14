@@ -13,6 +13,13 @@ final class AppleSpeechSttClient: NSObject, SttClient {
     /// 回调可能在任意线程触发，调用方需自行切回主线程更新 UI。
     var onAssetDownloadProgress: ((Double) -> Void)?
 
+    /// 域名词热词（SttClient.setVocabulary）。识别任务逐句轮转（rotate 后新建
+    /// request），所以存起来、每次 `begin()` 注入。存取都收敛到 `q` 上，任意线程
+    /// 可调、录音中途更新也安全（下一句生效）；只进端侧识别器，不离开本机。
+    func setVocabulary(_ terms: [String]) {
+        q.async { [weak self] in self?.vocabulary = terms }
+    }
+
     private var recognizer: SFSpeechRecognizer?
     private let localeID: String
     private let q = DispatchQueue(label: "notchmeet.applestt")
@@ -23,6 +30,7 @@ final class AppleSpeechSttClient: NSObject, SttClient {
     private func setConnected(_ v: Bool) { lock.lock(); _connected = v; lock.unlock() }
 
     // 以下只在 `q` 上访问：
+    private var vocabulary: [String] = []
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var endpointer = UtteranceEndpointer()
@@ -170,6 +178,7 @@ final class AppleSpeechSttClient: NSObject, SttClient {
         req.requiresOnDeviceRecognition = true
         req.shouldReportPartialResults = true
         if #available(macOS 13, *) { req.addsPunctuation = true }
+        if !vocabulary.isEmpty { req.contextualStrings = vocabulary }
         request = req
         endpointer = UtteranceEndpointer()
         pendingText = ""

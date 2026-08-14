@@ -17,6 +17,20 @@ final class ScriptGroundingTests: XCTestCase {
         super.tearDown()
     }
 
+    /// 块头必须与 Prompts.system 的指令锚点同语言：中文 system prompt 用
+    /// 「用户准备的回答」指代这块内容，日语块头会让指令与素材对不上号。
+    func testContextBlockHeaderFollowsInterviewLanguage() {
+        let store = ScriptStore(directory: dir)
+        store.add(name: "test", entries: [
+            BankEntry(id: "e1", intent: "自我介绍", question: "自我介绍",
+                      answer: "面试官您好，我叫测试。", locked: true),
+        ])
+        let zh = store.contextBlock(for: "请介绍一下你自己", language: .chinese)
+        XCTAssertTrue(zh.hasPrefix("# 用户准备的回答"), "中文块头: \(zh.prefix(30))")
+        let ja = store.contextBlock(for: "自我介绍", language: .japanese)
+        XCTAssertTrue(ja.hasPrefix("# ユーザーが準備した回答"), "日语块头维持原行为")
+    }
+
     /// 40 条冗长条目 + 1 条相关条目排在最后 —— 相关条目必须进 grounding。
     func testRelevantEntryLateInLongScriptIsIncluded() {
         let store = ScriptStore(directory: dir)
@@ -30,7 +44,7 @@ final class ScriptGroundingTests: XCTestCase {
                                  answer: "はい、問題ございません。2027年5月まで有効です。", locked: true))
         store.add(name: "test", entries: entries)
 
-        let block = store.contextBlock(for: "在留資格は問題ないですか。")
+        let block = store.contextBlock(for: "在留資格は問題ないですか。", language: .japanese)
         XCTAssertTrue(block.contains("在留資格は大丈夫ですか"), "relevant question missing")
         XCTAssertTrue(block.contains("2027年5月まで有効です"), "relevant answer missing")
     }
@@ -43,7 +57,7 @@ final class ScriptGroundingTests: XCTestCase {
                       answer: String(repeating: "回答。", count: 100), locked: true)
         }
         store.add(name: "test", entries: entries)
-        XCTAssertLessThanOrEqual(store.contextBlock(for: "質問1について").count, 1500)
+        XCTAssertLessThanOrEqual(store.contextBlock(for: "質問1について", language: .japanese).count, 1500)
     }
 
     /// 不再拦腰截断：进入 grounding 的条目答案必须完整。
@@ -56,7 +70,7 @@ final class ScriptGroundingTests: XCTestCase {
         }
         store.add(name: "test", entries: entries)
 
-        let block = store.contextBlock(for: "質問3について教えてください")
+        let block = store.contextBlock(for: "質問3について教えてください", language: .japanese)
         // 每个出现在 block 里的条目，其答案结尾 marker 必须同样出现相同次数。
         let headings = block.components(separatedBy: "## ").count - 1
         let completeAnswers = block.components(separatedBy: marker).count - 1
@@ -66,6 +80,6 @@ final class ScriptGroundingTests: XCTestCase {
 
     func testEmptyScriptYieldsEmptyBlock() {
         let store = ScriptStore(directory: dir)
-        XCTAssertEqual(store.contextBlock(for: "自己紹介をお願いします"), "")
+        XCTAssertEqual(store.contextBlock(for: "自己紹介をお願いします", language: .japanese), "")
     }
 }

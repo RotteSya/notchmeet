@@ -249,6 +249,9 @@ final class AppController {
         // time the interview actually begins, and the FIRST question is the worst moment to
         // pay TLS/H2 cold-start (§14.4). Sends no user data — a 1-token ping.
         prewarmLLM()
+        // 热词取开录一刻的最新值：最常见的「填完简历事实/换稿 → 直接开始录音」流程
+        // 不经过 reloadPipeline，arm 时下发的那份是旧快照。
+        stt.setVocabulary(sttContextualVocabulary())
         do {
             // Open the audio tap FIRST so that "no call app to capture" throws before the STT
             // socket opens — we never start uploading when there is nothing to capture.
@@ -456,12 +459,32 @@ final class AppController {
     /// when recording actually starts. `URLSession.shared` pools by host, so this warms the
     /// exact connection generate()/router reuse. Sends no user audio — only a 1-token ping.
     private func prewarmLLM() {
-        guard ProviderRegistry.llmResolution() != .none else { return }
-        Task.detached(priority: .utility) {
-            let t0 = DispatchTime.now().uptimeNanoseconds
-            _ = try? await FastLLM.complete(system: "warmup", user: ".", maxTokens: 1)
-            let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
-            NSLog("[prewarm] LLM connection warmed in %dms", Int(ms))
+        // 解析全部挪进后台 task：llmResolution/llmFallbackResolution 内是多次同步
+        // Keychain XPC（重签名后还可能是 ACL 弹框），而本函数在主线程被 armLive 与
+        // 60s 保温定时器反复调用。
+        func warm(_ label: String, _ resolve: @escaping @Sendable () -> LLMResolution?) {
+            Task.detached(priority: .utility) {
+                guard let r = resolve() else { return }
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                _ = try? await FastLLM.complete(system: "warmup", user: ".", maxTokens: 1,
+                                                resolution: r)
+                let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
+                NSLog("[prewarm] %@ (%@) warmed in %dms", label, String(describing: r), Int(ms))
+            }
+        }
+        warm("LLM connection") {
+            let r = ProviderRegistry.llmResolution()
+            return r == .none ? nil : r
+        }
+        // 候补也要焐热：首 token 看门狗切换发生时，现付 DNS+TLS+H2 的正是降级链
+        // 第二家——而那必然落在「主选已经 3s 没吐字」的最不能再等的一问上。域内
+        // 候补（qwen⇄deepseek）走 directSession 池，与主选不共享连接。被墙的候补
+        // 不焐：国内残留的 Gemini/Claude key 会让每次保温 ping 各挂满一个超时。
+        warm("fallback") {
+            guard let fb = ProviderRegistry.llmFallbackResolution(),
+                  !Settings.llmBlockedInChina(fb, inChina: Settings.isLikelyInChina())
+            else { return nil }
+            return fb
         }
     }
 
@@ -726,6 +749,10 @@ final class AppController {
     /// 把 STT 客户端接进管线的全部回调（转写 / 资产下载 / 断连重连 / 错误）。
     /// armLive 与 R1 的中途热切换共用——两处各接一份迟早漏改一处。
     private func attachSttHandlers(_ sttc: SttClient) {
+        // 域名词热词随管线装配下发（Apple → contextualStrings 端侧；Deepgram → 仅日语
+        // keywords boost）。走协议不下转型：armLive 与 R1 热切换共用本函数，正是
+        // 「两处各接一份迟早漏改一处」要防的模式。startRecording 会再刷一次最新值。
+        sttc.setVocabulary(sttContextualVocabulary())
         sttc.onTranscript = { [weak self] t in
             if !t.text.isEmpty { self?.inactivity.noteActivity() } // interviewer was heard
             DispatchQueue.main.async { self?.turn?.handleTranscript(t) }
@@ -793,6 +820,27 @@ final class AppController {
         }
     }
 
+    /// STT 热词：公司名、职务、技能、志望公司。这些字段本身就是词粒度，不需要
+    /// 分词；专有名词正是端侧 zh-CN/ja-JP 识别最容易听错、且下游完全救不回的一类。
+    /// 全程不受 sendContextToLLM 门控：Apple 路径一个字节都不出网，Deepgram 路径
+    /// 与音频本体走同一条既经同意的通道。
+    private func sttContextualVocabulary() -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        func add(_ raw: String?) {
+            guard let raw else { return }
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.count >= 2, t.count <= 20, seen.insert(t).inserted else { return }
+            out.append(t)
+        }
+        // 面试目标公司名排最前——热词表被 prefix(50) 截断时，最不能丢的就是它。
+        add(scriptStore.active?.company)
+        for m in facts.sheet.motivations { add(m.targetCompany) }
+        for e in facts.sheet.experiences { add(e.org); add(e.role) }
+        for e in facts.sheet.experiences { e.skills.forEach { add($0) } }
+        return Array(out.prefix(50))   // 热词表要小而准，杂草会反噬识别
+    }
+
     /// 音频链路 → 指定 STT 客户端。声级总线永远在路上（刘海光场不因换引擎熄灭）。
     private func routeAudio(to sttc: SttClient?) {
         audio?.onPCM = { [weak sttc] pcm in
@@ -829,7 +877,7 @@ final class AppController {
         NSLog("[live] STT finals too slow — hot-swapping to Apple on-device (%@)", locale)
         let old = stt
         let apple = AppleSpeechSttClient(localeID: locale)
-        attachSttHandlers(apple)
+        attachSttHandlers(apple)   // 含热词下发
         do { try apple.start() } catch {
             NSLog("[live] Apple STT failed to start (%@) — staying on Deepgram",
                   String(describing: error))

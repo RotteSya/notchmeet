@@ -187,6 +187,72 @@ final class InterviewLanguageTests: XCTestCase {
         XCTAssertFalse(ja.looksLikeCompletedPrompt("弊社は小売業を営んでおります"))
     }
 
+    /// 中文疑问信号大多在句中：「为什么选择我们**公司**」句尾是名词，尾词表照不到。
+    /// 这类问题此前全部吃 1.8s 长窗口——每问比短窗口多白等约 1 秒。
+    @MainActor
+    func testChineseMidSentenceInterrogativesCountAsCompletedPrompts() {
+        let tm = makeTurnManager(.chinese)
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("为什么选择我们公司"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("你在项目里负责哪个模块"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("你觉得这个方案有什么风险"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("你是不是更倾向于后端方向"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("有没有带过团队"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("这个指标你们是怎么定的"))
+        // 祈使型提问常不带「请」，但必须锚定第二人称/「自己」。
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("介绍一下你自己"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("说说你最有成就感的项目"))
+        // 疑问词只查最后一个分句：铺垫半句里的疑问词不算交棒。分隔符必须含句读
+        // 与空格——pendingQ 是多条终稿用空格拼接的累积体，只认逗号时收窄整体失效。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("大家都问为什么，我先说一下我们的安排"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("大家都问为什么。我先介绍一下公司情况"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("很多人问为什么加班 我先说一下我们的节奏"))
+        // 面试官的开场陈述/第一人称祈使不是提问。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我先介绍一下我们团队"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我先介绍一下自己，我是技术负责人"))
+        // 陈述用法排除词与词表绑定（没什么/没有什么/几乎/不怎么/哪怕）。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我几乎什么都做过"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("这个岗位没有什么硬性要求"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("时间上没什么冲突"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我们不怎么加班"))
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("哪怕项目再紧我们也没延期过"))
+        // 量词陈述不收（我做了几年后端）——几个/几年/几次刻意不在词表里。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我在这家公司做了几年后端"))
+        // 3 字短问不算交棒：更可能是长问题在停顿处切出的头一截，长窗口等后半句。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("为什么"))
+    }
+
+    /// 中文 3 字短追问（端侧终稿常无问号）是真问题，不许被 4 字长度闸当寒暄吞掉。
+    @MainActor
+    func testChineseShortFollowUpsAreMeaningful() {
+        let tm = makeTurnManager(.chinese)
+        XCTAssertTrue(tm.isMeaningfulQuestion("为什么"))
+        XCTAssertTrue(tm.isMeaningfulQuestion("然后呢"))
+        XCTAssertTrue(tm.isMeaningfulQuestion("比如呢"))
+        XCTAssertTrue(tm.isMeaningfulQuestion("多少？"))
+        // 非疑问短语维持原闸。
+        XCTAssertFalse(tm.isMeaningfulQuestion("谢谢。"))
+        XCTAssertFalse(tm.isMeaningfulQuestion("收到"))
+        XCTAssertFalse(tm.isMeaningfulQuestion("很好"))
+        // 含疑问字形的 3 字口语填充仍要滤掉（skip 表对 <4 字不可达，靠 zhShortFillers）。
+        XCTAssertFalse(tm.isMeaningfulQuestion("怎么说"))
+        XCTAssertFalse(tm.isMeaningfulQuestion("是不是"))
+        // 日语 <4 字维持原闸——用 3 字样本，2 字的「なぜ」在长度闸就被挡、
+        // 走不到语言判别分支，锁不住这里要锁的行为。
+        let ja = makeTurnManager(.japanese)
+        XCTAssertFalse(ja.isMeaningfulQuestion("どうぞ"))
+    }
+
+    /// 中文面试的事实块标签必须与中文 system prompt 的锚点（「事实信息」）同语言：
+    /// 日语标签会让「只以事实信息为依据」的指令与素材对不上号。
+    func testFactContextLabelsFollowInterviewLanguage() {
+        let s = store("希望年収: 400万円")
+        let zh = s.context(for: "", language: .chinese)
+        XCTAssertTrue(zh.contains("自我分析笔记:"), "中文面试要用中文标签: \(zh)")
+        XCTAssertFalse(zh.contains("自己分析メモ"), "中文面试不许出现日语标签")
+        let ja = s.context(for: "", language: .japanese)
+        XCTAssertTrue(ja.contains("自己分析メモ:"), "日语标签维持原行为")
+    }
+
     /// 中文寒暄不许触发真回合（取消在途生成 + 烧计费调用 + 污染 history）。
     @MainActor
     func testChineseBackchannelsAreNotMeaningfulQuestions() {

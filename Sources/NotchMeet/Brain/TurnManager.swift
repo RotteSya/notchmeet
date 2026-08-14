@@ -28,6 +28,12 @@ final class TurnManager: @unchecked Sendable {
     private var committedEpoch = -1
     private var liveBuffer = ""
     private var liveIsCommittedSource = false
+    /// 上屏刷新已排队（见 runLive 的合批注释）。只在主队列上读写。
+    private var liveFlushScheduled = false
+    /// 本轮 live 流已收束（finishLive/failTurn 已处理，含错误分支）。迟到的 flushLive
+    /// 必须作废：没有这道闸，它会把刚落地的 error 态改写回「可作答」，或重新提交一段
+    /// 永远不会 finishTurn 的半截答案——正是旧「delta 内同步提交」隐式防住的两类事故。
+    private var liveClosed = false
     private var liveTask: Task<Void, Never>?
     private var routerTask: Task<Void, Never>?
     private var currentQuestion = ""
@@ -49,6 +55,10 @@ final class TurnManager: @unchecked Sendable {
     //   (2) それでも間が空いて表明だけ確定してしまった場合の保険＝リコール・マージ：直後(mergeGrace)に
     //       本題が来たら、そのターンを開き直して〔表明＋本題〕を1問として答え直す（armMerge）。
     private var pendingQ = ""
+    /// `looksLikeCompletedPrompt(pendingQ)` 的缓存。interim 只是推迟定稿、不改 pendingQ，
+    /// 而 armSettle 每条 interim 都会重跑——对完全相同的字符串按 5-10Hz 重算一遍
+    /// trim + 词表扫描纯属浪费。只在 pendingQ 真正变化的两处（final 追加 / 清空）重算。
+    private var pendingQCompleted = false
     private var settleWork: DispatchWorkItem?
     /// 最后一个被接受的终稿到达时刻（uptime ns），供 LatencyMonitor 拆分端点延迟。
     private var lastFinalNs: UInt64 = 0
@@ -148,6 +158,7 @@ final class TurnManager: @unchecked Sendable {
             NSLog("[turn] merge-recall: folding follow-up into prior setup")
         }
         pendingQ = pendingQ.isEmpty ? q : pendingQ + " " + q
+        pendingQCompleted = looksLikeCompletedPrompt(pendingQ)
         armSettle()
     }
 
@@ -160,7 +171,7 @@ final class TurnManager: @unchecked Sendable {
     /// so that banked silence is credited instead of waited twice (§4 预算里最大的一块固定浪费).
     private func armSettle() {
         settleWork?.cancel()
-        let window = looksLikeCompletedPrompt(pendingQ) ? settleWindow : settleWindowMax
+        let window = pendingQCompleted ? settleWindow : settleWindowMax
         let delay = max(0, window - bankedSilence())
         let work = DispatchWorkItem { [weak self] in self?.commitPending() }
         settleWork = work
@@ -192,7 +203,7 @@ final class TurnManager: @unchecked Sendable {
         guard let last = t.last else { return false }
         if "？?".contains(last) { return true }                    // explicit question mark
         // strip trailing sentence punctuation, then inspect the real ending
-        let core = t.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、，…!！?？"))
+        let core = t.trimmingCharacters(in: Self.questionTrimSet)
         guard let c = core.last else { return false }
         switch interviewLanguage {
         case .japanese:
@@ -204,22 +215,75 @@ final class TurnManager: @unchecked Sendable {
             return false
         case .chinese:
             // 端侧 zh-CN 终稿常无「？」（Apple 引擎是国内推荐路径），只靠问号会让
-            // 每个中文问题都吃满长 settle 窗口。语气助词与疑问词结尾 = 交棒。
-            for tail in ["吗", "呢", "多少", "什么", "为什么", "怎么样", "如何",
-                         "哪些", "哪里", "是谁", "怎么办"] {
-                if core.hasSuffix(tail) { return true }
-            }
-            // 祈使型提问（「请介绍一下你自己」「请谈谈你的项目」）。
-            if core.hasPrefix("请"),
-               ["介绍", "谈", "说", "讲", "描述", "分享", "举"].contains(where: core.contains) {
-                return true
-            }
-            return false
+            // 每个中文问题都吃满长 settle 窗口。语气助词尾（吗/呢）= 交棒；其余疑问
+            // 信号一律走 zhLooksInterrogative——尾缀必然落在最后一个分句里，而那里
+            // 每个疑问词都绑着陈述用法排除项。在这里保留旧尾词表先行短路的话，
+            // 「我这边没什么」会以尾缀「什么」直接判成交棒，排除项永远失效。
+            if core.hasSuffix("吗") || core.hasSuffix("呢") { return true }
+            // 3 字短问（「为什么」）不算交棒：它更可能是长问题在停顿处被切出的头一截，
+            // 长窗口 + armMerge 让后半句折回同一轮；孤立短追问晚 ~1s 提交无伤大雅。
+            guard core.count >= 4 else { return false }
+            return Self.zhLooksInterrogative(core)
         }
     }
 
+    /// 中文疑问信号大多在句中而非句尾——「为什么选择我们**公司**」「你觉得这个方案有什么
+    /// **问题**」句尾都是名词，尾词表照不到，这类问题此前全部吃满 1.8s 长窗口
+    /// （比短窗口每问多白等约 1 秒）。误判为「已交棒」的代价是：短窗提交 + 解除
+    /// recall-merge 网，铺垫句与后续本题被拆开；所以判定收窄成三道闸：
+    ///  - 疑问代词/正反问只查**最后一个分句**。分隔符包含句读与空格——pendingQ 是
+    ///    多条终稿用空格拼接的累积体（handleTranscript），只按逗号切时「大家都问
+    ///    为什么。我先介绍一下公司」整串就是一个分句，收窄对跨句输入整体失效。
+    ///  - 每个疑问词绑定自己的陈述用法排除项（没什么/几乎/不怎么…），词与排除项
+    ///    在同一行声明，不靠行序表达依赖。
+    ///  - 祈使型提问要求第二人称/「自己」锚定，且紧邻前字不得是 我/先/来/们——
+    ///    「介绍一下你自己」是提问，「我先介绍一下自己，我是技术负责人」是开场白。
+    static func zhLooksInterrogative(_ core: String) -> Bool {
+        let clause = core.split(whereSeparator: { Self.zhClauseSeparators.contains($0) })
+            .last.map(String.init) ?? core
+        if Self.zhClauseMarkers.contains(where: { marker, unless in
+            clause.contains(marker) && !unless.contains(where: clause.contains)
+        }) { return true }
+        // 显式「请 + 动词」祈使（「请介绍一下你自己」「请聊聊你们的项目」）。
+        if core.hasPrefix("请"), Self.zhAskVerbs.contains(where: core.contains) { return true }
+        // 不带「请」的祈使型提问（全句扫描：动词在句首、修饰语在句尾，最后分句常照不到）。
+        for marker in Self.zhImperativeAsks {
+            guard let r = core.range(of: marker) else { continue }
+            if r.lowerBound == core.startIndex { return true }
+            if !"我先来们".contains(core[core.index(before: r.lowerBound)]) { return true }
+        }
+        return false
+    }
+
+    /// 最后分句的切分符：句内停顿 + 句间句读 + 空格（pendingQ 的终稿拼接符）。
+    private static let zhClauseSeparators: Set<Character> =
+        ["，", ",", "、", "；", ";", "。", "．", ".", "！", "!", "？", "?", "…", " ", "　"]
+    /// (疑问标记, 陈述用法排除项)。排除项按「包含即否决」在同一分句内判定。
+    private static let zhClauseMarkers: [(String, [String])] = [
+        // A-not-A 正反问：出现即交棒。
+        ("是不是", []), ("有没有", []), ("能不能", []), ("会不会", []), ("可不可以", []),
+        ("愿不愿意", []), ("行不行", []), ("对不对", []), ("要不要", []),
+        // 疑问代词/副词。「几个/几年/几次」刻意不收：量词陈述（我做了几年后端）远多于疑问。
+        ("为什么", []), ("为啥", []),
+        ("什么", ["没什么", "没有什么", "什么的", "几乎"]),
+        ("怎么", ["不怎么", "没怎么", "不管怎么", "无论怎么", "几乎"]),
+        ("如何", ["无论如何", "不管如何"]),
+        ("哪", ["哪怕"]),
+        ("多少", ["多少有点", "或多或少", "几乎"]),
+        ("多久", []), ("多长时间", []),
+        ("谁", ["谁都", "谁也"]),
+    ]
+    private static let zhAskVerbs = ["介绍", "谈", "说", "讲", "聊", "描述", "分享", "举"]
+    private static let zhImperativeAsks = [
+        "介绍一下你", "介绍一下自己", "说说你", "谈谈你", "讲讲你", "聊聊你",
+        "说一下你", "讲一下你", "谈一下你", "分享一下你", "描述一下你",
+        "举个例子", "举一个例子",
+    ]
+    /// 3 字口语填充：含疑问字形但不是提问，短问放行分支必须过滤（skip 表对 <4 字不可达）。
+    private static let zhShortFillers: Set<String> = ["怎么说", "那什么", "是不是", "对不对", "什么呀", "好的呢"]
+
     private func cancelSettle() {
-        settleWork?.cancel(); settleWork = nil; pendingQ = ""
+        settleWork?.cancel(); settleWork = nil; pendingQ = ""; pendingQCompleted = false
         disarmMerge()   // a pause/stop ends the turn — never merge across it
     }
 
@@ -259,29 +323,44 @@ final class TurnManager: @unchecked Sendable {
     /// 答えを誘発しないようにする（§6）。末尾の句読点を外してから照合するので「なるほど。」「なるほど！」
     /// もまとめて弾く。長さ判定は元テキストのまま（terse な質問「強みは？」を巻き込まない）。
     func isMeaningfulQuestion(_ q: String) -> Bool {
-        if q.count < 4 { return false }
-        let core = q.trimmingCharacters(in: CharacterSet(charactersIn: "　 。．、，…!！?？"))
-        let skip: Set<String> = [
-            "はい", "ええ", "うん", "そうですね", "なるほど", "なるほどですね",
-            "了解", "オーケー", "わかりました", "承知しました", "いいですね",
-            // 開始/終了の寒暄（単独で出たとき。本題が続けば settle で本題に連結される）
-            "よろしくお願いします", "よろしくお願いいたします",
-            "本日はよろしくお願いします", "それではよろしくお願いします",
-            "ありがとうございます", "ありがとうございました",
-            "お願いします", "失礼します", "失礼いたします",
-            // 中文寒暄/附和（超过 4 字长度闸的那些；更短的被长度闸挡住）。
-            // 不滤掉这些，每一句「好的，我明白了」都会取消在途生成、烧一次计费调用，
-            // 并把垃圾回合写进 history 污染下一问的去重与 grounding。
-            "好的好的", "对对对", "明白了", "我明白了", "好的我明白了", "好的明白了",
-            "谢谢", "谢谢你", "谢谢您", "谢谢您的回答", "谢谢您的分享",
-            "非常好", "很好", "没问题", "收到",
-            "那我们开始吧", "我们开始吧", "那我们继续", "好的我们继续", "辛苦了",
-        ]
+        let core = q.trimmingCharacters(in: Self.questionTrimSet)
+        if q.count < 4 {
+            // 中文短追问是真问题：「为什么」「然后呢」在端侧 zh-CN 终稿里常以裸形式
+            // 出现（无问号，3 字），旧的 4 字长度闸把它们当寒暄整条吞掉——面试官的
+            // 追问石沉大海。只对中文、且带疑问信号的 3 字形式放行；口语填充
+            // （怎么说/是不是）仍要滤掉——它们会取消在途生成、烧一次计费调用，落在
+            // mergeGrace 内还会触发 merge-recall 撤回上一轮完好的定稿。日语没有
+            // <4 字的实质提问，维持原闸。
+            guard interviewLanguage == .chinese, q.count >= 3, core.count >= 2,
+                  Self.zhLooksInterrogative(core) || core.hasSuffix("呢"),
+                  !Self.zhShortFillers.contains(core) else { return false }
+            return true
+        }
         // 中文寒暄常带句中逗号（「好的，我明白了」），首尾 trim 够不到——查表前
         // 把句内顿逗一并去掉。日语表目本身不含标点，此归一化对日语无影响。
         let compact = String(core.filter { !"、，,　 ".contains($0) })
-        return !skip.contains(core) && !skip.contains(compact)
+        return !Self.backchannels.contains(core) && !Self.backchannels.contains(compact)
     }
+
+    /// 问句首尾要剥掉的标点（isMeaningfulQuestion / looksLikeCompletedPrompt 共用）。
+    static let questionTrimSet = CharacterSet(charactersIn: "　 。．、，…!！?？")
+
+    private static let backchannels: Set<String> = [
+        "はい", "ええ", "うん", "そうですね", "なるほど", "なるほどですね",
+        "了解", "オーケー", "わかりました", "承知しました", "いいですね",
+        // 開始/終了の寒暄（単独で出たとき。本題が続けば settle で本題に連結される）
+        "よろしくお願いします", "よろしくお願いいたします",
+        "本日はよろしくお願いします", "それではよろしくお願いします",
+        "ありがとうございます", "ありがとうございました",
+        "お願いします", "失礼します", "失礼いたします",
+        // 中文寒暄/附和（超过 4 字长度闸的那些；更短的被长度闸挡住）。
+        // 不滤掉这些，每一句「好的，我明白了」都会取消在途生成、烧一次计费调用，
+        // 并把垃圾回合写进 history 污染下一问的去重与 grounding。
+        "好的好的", "对对对", "明白了", "我明白了", "好的我明白了", "好的明白了",
+        "谢谢", "谢谢你", "谢谢您", "谢谢您的回答", "谢谢您的分享",
+        "非常好", "很好", "没问题", "收到",
+        "那我们开始吧", "我们开始吧", "那我们继续", "好的我们继续", "辛苦了",
+    ]
 
     private func startTurn(question: String) {
         epoch += 1
@@ -293,6 +372,8 @@ final class TurnManager: @unchecked Sendable {
         state = .generating
         liveBuffer = ""
         liveIsCommittedSource = false
+        liveFlushScheduled = false
+        liveClosed = false
         latency.turnStart(myEpoch, sttFinalNs: lastFinalNs)
 
         // 前ターンの答えはここでは消さない。新しい答えの先頭文が確定するまで（runRouter / runLive の
@@ -351,7 +432,7 @@ final class TurnManager: @unchecked Sendable {
         // script are NOT sent to the cloud LLM (answers become generic).
         var ctx = ""
         if Settings.sendContextToLLM {
-            ctx = knowledge.context(for: question)
+            ctx = knowledge.context(for: question, language: interviewLanguage)
             // Grounding 的排序查询按问题类型选素材：
             // - 指代型追问（「それを弊社で…」）：素材就是**被指代的那段**——只按上一个
             //   问题排序。这同时把「活用/貢献」形状的错位桥接稿自然挤出上下文：system
@@ -367,7 +448,8 @@ final class TurnManager: @unchecked Sendable {
             } else {
                 groundingQuery = question + " " + prevQ
             }
-            if let script = scriptStore?.contextBlock(for: groundingQuery), !script.isEmpty {
+            if let script = scriptStore?.contextBlock(for: groundingQuery,
+                                                      language: interviewLanguage), !script.isEmpty {
                 ctx += (ctx.isEmpty ? "" : "\n\n") + script
             }
         }
@@ -393,7 +475,9 @@ final class TurnManager: @unchecked Sendable {
         if let bank {
             if Settings.answerBankLanguage == interviewLanguage {
                 cands += bank.candidates(for: question)
-            } else if !bank.candidates(for: question).isEmpty {
+            } else if !bank.isEmpty {
+                // 示警只需「库非空」，不为一行日志付一次 ranked 全表扫描——
+                // 语言不匹配恰恰是最需要省时的降级场景。
                 NSLog("[router] answer bank is %@ but session is %@ — bank skipped (rebuild via 预生成回答)",
                       Settings.answerBankLanguage.rawValue, interviewLanguage.rawValue)
             }
@@ -469,16 +553,18 @@ final class TurnManager: @unchecked Sendable {
                     guard myEpoch == self.epoch else { return }
                     if self.committedEpoch == myEpoch && !self.liveIsCommittedSource { return } // cache won
                     self.liveBuffer += delta
-                    if self.liveIsCommittedSource {
-                        self.model.answer = SpokenAnswerFormatter.normalize(self.liveBuffer)
-                    } else if self.hasSpeakableOpening(self.liveBuffer) {
-                        guard self.committedEpoch != myEpoch else { return } // cache just committed
-                        self.committedEpoch = myEpoch
-                        self.liveIsCommittedSource = true
-                        self.latency.markFirstReadable(epoch: myEpoch, kind: .live)
-                        self.model.status = .streaming
-                        self.model.message = .suggesting
-                        self.model.answer = SpokenAnswerFormatter.normalize(self.liveBuffer)
+                    // normalize 与下游的 CTFrame 量高都是对整段 buffer 的 O(n) 全量
+                    // 重跑——逐 token 执行在长答案上是主线程 O(n²)。「已有 flush 在队
+                    // 列里就不再排」只在主线程堵住时才合并，常态 SSE（每 20-40ms 一个
+                    // token、主线程空闲）下一个字都省不了；真正封顶靠时间维度节流：
+                    // 提交后每 50ms 至多刷一次（≪ 渲染层 0.18s 逐字淡入，不可感知）。
+                    // 提交前保持即时——首句上屏在关键路径上，一毫秒都不多等。
+                    guard !self.liveFlushScheduled else { return }
+                    self.liveFlushScheduled = true
+                    let delay: TimeInterval = self.liveIsCommittedSource ? 0.05 : 0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        guard let self else { return }
+                        MainActor.assumeIsolated { self.flushLive(myEpoch) }
                     }
                 }
             }
@@ -488,6 +574,32 @@ final class TurnManager: @unchecked Sendable {
         } catch {
             await failTurn(myEpoch, error: error)
         }
+    }
+
+    /// 合批后的上屏刷新（主队列）。提交判定从 delta 回调移到这里：commit 时机最多
+    /// 晚一个节流周期（≤50ms），远小于渲染层 0.18s 的逐字淡入。
+    @MainActor private func flushLive(_ myEpoch: Int) {
+        // 过期 flush 不碰新一轮的调度标志——startTurn 已为新轮复位。
+        guard myEpoch == epoch else { return }
+        liveFlushScheduled = false
+        // 终态守卫：finishLive/failTurn 已收束本轮（含空正文与未提交失败的错误分支，
+        // 它们不走 finishTurn、state 不会变 .presenting，只有这面旗帜能挡住迟到的 flush）。
+        guard !liveClosed else { return }
+        if committedEpoch == myEpoch && !liveIsCommittedSource { return } // cache won / late-hit 换稿
+        if !liveIsCommittedSource {
+            guard hasSpeakableOpening(liveBuffer) else { return }
+            markLiveCommitted(myEpoch)
+        }
+        model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
+    }
+
+    /// live 流赢下（或收尾时兜底提交）本轮的五连写，flushLive / finishLive 共用。
+    @MainActor private func markLiveCommitted(_ myEpoch: Int) {
+        committedEpoch = myEpoch
+        liveIsCommittedSource = true
+        latency.markFirstReadable(epoch: myEpoch, kind: .live)
+        model.status = .streaming
+        model.message = .suggesting
     }
 
     /// 取消不是故障。
@@ -514,13 +626,10 @@ final class TurnManager: @unchecked Sendable {
 
     @MainActor private func finishLive(_ myEpoch: Int) {
         guard myEpoch == epoch else { return }
+        liveClosed = true   // 此后任何迟到的 flushLive 一律作废（含下方空正文错误分支）
         if committedEpoch != myEpoch {
             // very short answer that never tripped the commit threshold — commit now.
-            committedEpoch = myEpoch
-            liveIsCommittedSource = true
-            latency.markFirstReadable(epoch: myEpoch, kind: .live)
-            model.status = .streaming
-            model.message = .suggesting
+            markLiveCommitted(myEpoch)
         }
         guard liveIsCommittedSource else { return } // cache owns the turn
         let final = SpokenAnswerFormatter.normalize(liveBuffer)
@@ -575,16 +684,22 @@ final class TurnManager: @unchecked Sendable {
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
         guard myEpoch == epoch else { return }
+        liveClosed = true   // 同 finishLive：错误态落地后，迟到的 flushLive 不许改写它
         guard committedEpoch != myEpoch else {
+            guard liveIsCommittedSource else {
+                // cache 已赢下本轮：live 流的失败与屏上的原稿无关，且 finishTurn 已经
+                // 跑过——再跑一遍会给完好的原稿挂「可能不完整」，并把同一轮压成
+                // history 双条、SessionStore 重复行、延迟账双记。
+                NSLog("[turn] live stream failed after cache commit (turn %d) — ignored", myEpoch)
+                return
+            }
             // 已经上屏之后才失败（网络中途断开）。旧实现在这里直接 return，回合永远停在
             // .streaming：用户对着半截答案，状态行一直显示「生成中」，面板不折叠，
             // 该回合也不进 history（下一问的深掘去重少一环），LatencyMonitor 还会漏账。
             // 正确的收尾是把已有内容定格为完成态，并附上「可能不完整」的提示。
             NSLog("[turn] stream failed after commit (turn %d): %@",
                   myEpoch, String(describing: error))
-            if liveIsCommittedSource {
-                model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
-            }
+            model.answer = SpokenAnswerFormatter.normalize(liveBuffer)
             model.errorDetail = AppStrings.current.answerMayBeIncomplete
             finishTurn(myEpoch)
             return
