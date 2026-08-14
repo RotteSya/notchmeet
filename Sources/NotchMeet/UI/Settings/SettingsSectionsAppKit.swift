@@ -39,6 +39,19 @@ final class GeneralSection: SectionScroll {
         }
         constrain(seg, width: 204, height: 30)
 
+        // 面试语言：决定 STT 识别语言与 AI 回答语言，下一次开始录音生效。
+        // 与界面语言独立——界面中文、面试日语是主流用法。
+        let interviewLangs: [InterviewLanguage] = [.japanese, .chinese]
+        let interviewSeg = SKSegmented(
+            titles: interviewLangs.map { s.interviewLanguageName($0) },
+            selected: interviewLangs.firstIndex(of: Settings.interviewLanguage) ?? 0) { idx in
+            Settings.interviewLanguage = interviewLangs[idx]
+            // 界面语言行的摘要（「面试与回答：…」）与 STT 相关帮助文案引用了面试语言，
+            // 走与界面语言切换同一条重建路径即时刷新。
+            NotificationCenter.default.post(name: .nmInterviewLanguageChanged, object: nil)
+        }
+        constrain(interviewSeg, width: 204, height: 30)
+
         // 回答字号：即改即用——NotchType 渲染与量高同源，刘海下一帧就按新字号排。
         let sizes = Settings.AnswerTextSize.allCases
         let sizeSeg = SKSegmented(titles: [s.answerSizeCompact, s.answerSizeStandard, s.answerSizeLarge],
@@ -71,6 +84,8 @@ final class GeneralSection: SectionScroll {
             title,
             SKBuild.divider(),
             SKBuild.controlRow(s.uiLanguageSettings, control: seg, help: s.languageSummaryValue),
+            SKBuild.divider(),
+            SKBuild.controlRow(s.interviewLanguageLabel, control: interviewSeg, help: s.interviewLanguageHelp),
             SKBuild.divider(),
             SKBuild.controlRow(s.answerTextSizeLabel, control: sizeSeg, help: s.answerTextSizeHelp),
             SKBuild.divider(),
@@ -352,7 +367,8 @@ final class AnswerSection: SectionScroll {
             s.prepEngineLocalCLI(cli: name, vendor: engine.vendor ?? name)
         case .managed(let name):
             s.prepEngineManaged(name: name,
-                                seconds: PreGenerator.chargeSecondsPerIntent * Intents.list.count)
+                                seconds: PreGenerator.chargeSecondsPerIntent
+                                    * Intents.list(for: Settings.interviewLanguage).count)
         case .unavailable:
             s.prepEngineUnavailable
         }

@@ -21,7 +21,8 @@ enum FactQuickAnswer {
     ///
     /// 判定は二重：質問の話題タグとメモのラベルの話題タグが**同じ事実系グループ**で
     /// 重なること。片方だけでは撃たない。
-    static func answer(for question: String, facts: FactStore) -> String? {
+    static func answer(for question: String, facts: FactStore,
+                       language: InterviewLanguage = Settings.interviewLanguage) -> String? {
         let q = QuestionMatcher.normalized(question)
         let questionTopics = QuestionMatcher.topics(in: q).intersection(factualTopics)
         guard !questionTopics.isEmpty else { return nil }
@@ -38,14 +39,14 @@ enum FactQuickAnswer {
         // 候补只有一条＝没有歧义可言，照旧回答。「語学のスコアは？」对上唯一的
         // TOEIC 备忘正是这条路径——要求字面重合会把它误伤掉。
         if candidates.count == 1 {
-            return sentence(label: candidates[0].label, value: candidates[0].value)
+            return sentence(label: candidates[0].label, value: candidates[0].value, language: language)
         }
 
         let scored = candidates.map { (note: $0, score: labelAffinity(QuestionMatcher.normalized($0.label), in: q)) }
         let best = scored.max { $0.score < $1.score }!
         guard best.score > 0 else { return nil }                       // 谁都对不上 → 不撃つ
         guard scored.filter({ $0.score == best.score }).count == 1 else { return nil }  // 并列 → 不撃つ
-        return sentence(label: best.note.label, value: best.note.value)
+        return sentence(label: best.note.label, value: best.note.value, language: language)
     }
 
     /// 标签与问题的字面贴合度。整标签出现在问题里最强（希望年収 ⊂「希望年収は？」）；
@@ -67,13 +68,22 @@ enum FactQuickAnswer {
     /// ラベルと値だけから敬語一文を組む。値は**一切加工しない**——「400万円（応相談）」と
     /// 書いてあればそのまま使う。テンプレートは読み上げて自然になるものだけを特別扱いし、
     /// それ以外は「〜は〜です」の汎用形（どのラベルでも文法的に成立する）。
-    private static func sentence(label: String, value: String) -> String {
+    private static func sentence(label: String, value: String,
+                                 language: InterviewLanguage) -> String {
         // 値そのものが既に一文なら、テンプレートに押し込まない。
         // 「希望年収: 御社の規定に従います」を「〜を希望しております」に嵌めると
         // 「御社の規定に従いますを希望しております」という破格になる。
         if isCompleteSentence(value) { return value }
 
         let l = QuestionMatcher.normalized(label)
+        // 中文面试：通用形「〜是〜。」对任何标签都成句（入职时间是2027年4月。），
+        // 不需要日语那套愿望形/入社形的特判——特判是敬语语法逼出来的。
+        if language == .chinese {
+            if l.contains("入社") || l.contains("入职") || l.contains("到岗") || l.contains("いつから") {
+                return "\(value)起可以入职。"
+            }
+            return "\(label)是\(value)。"
+        }
         if l.contains("入社") || l.contains("着任") || l.contains("いつから") {
             return "\(value)から入社可能です。"
         }

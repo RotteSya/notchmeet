@@ -800,15 +800,16 @@ final class AppController {
     /// 成败都只尝试一次：切换是止损动作，反复横跳只会把两边的冷启动都吃一遍。
     private func degradeSttToApple() {
         sttDegradedThisSession = true
-        guard AppleSpeechSttClient.isReadyForHotSwap() else {
+        let locale = Settings.interviewLanguage.appleLocaleID
+        guard AppleSpeechSttClient.isReadyForHotSwap(localeID: locale) else {
             // 权限没给过 / 端侧资产没装：中途弹权限框或触发几百 MB 下载比慢更糟。
             // 留在 Deepgram（慢但在工作），只记日志供复盘。
             NSLog("[live] STT finals are slow but Apple on-device isn't ready — staying on Deepgram")
             return
         }
-        NSLog("[live] STT finals too slow — hot-swapping to Apple on-device (ja-JP)")
+        NSLog("[live] STT finals too slow — hot-swapping to Apple on-device (%@)", locale)
         let old = stt
-        let apple = AppleSpeechSttClient()
+        let apple = AppleSpeechSttClient(localeID: locale)
         attachSttHandlers(apple)
         do { try apple.start() } catch {
             NSLog("[live] Apple STT failed to start (%@) — staying on Deepgram",

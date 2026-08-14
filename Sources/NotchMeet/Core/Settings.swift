@@ -27,13 +27,18 @@ enum LLMResolution: Equatable {
 extension Notification.Name {
     /// 外观类设置（如回答字号）变化：刘海据此重排/重绘。
     static let nmAppearanceChanged = Notification.Name("nm.appearance.changed")
+    /// 面试语言变化：设置页据此重建当前分区（摘要文案里写着面试语言）。
+    static let nmInterviewLanguageChanged = Notification.Name("nm.interview.language.changed")
 }
 
 /// Runtime settings + key resolution. Keys come from Keychain first, then env (dev).
 enum Settings {
-    /// The product currently supports Japanese interviews. This is deliberately
-    /// independent from the Chinese/Japanese chrome selected by the user.
-    static let interviewLanguage: InterviewLanguage = .japanese
+    /// 面试语言（STT 识别语言 + LLM 生成回答的语言）。与界面语言相互独立——
+    /// 界面用中文、面试说日语是主流用法。默认日语（既有安装无此键，行为不变）。
+    static var interviewLanguage: InterviewLanguage {
+        get { InterviewLanguage(rawValue: UserDefaults.standard.string(forKey: "nm_interview_language") ?? "") ?? .japanese }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "nm_interview_language") }
+    }
 
     /// First-launch onboarding completed. Non-secret UI state → UserDefaults
     /// (API keys stay in Keychain; see `Secrets`).

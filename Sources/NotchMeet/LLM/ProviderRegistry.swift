@@ -96,8 +96,9 @@ enum ProviderRegistry {
     static func makeStt() -> SttClient {
         switch sttResolution() {
         case .apple:
-            NSLog("[provider] STT = Apple on-device (ja-JP)")
-            return AppleSpeechSttClient()
+            let locale = Settings.interviewLanguage.appleLocaleID
+            NSLog("[provider] STT = Apple on-device (%@)", locale)
+            return AppleSpeechSttClient(localeID: locale)
         case .deepgram:
             guard let key = Settings.apiKey("DEEPGRAM_API_KEY"), !key.isEmpty else {
                 // resolve 与 build 之间 key 被清除 / Keychain ACL 被拒 →

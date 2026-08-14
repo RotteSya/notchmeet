@@ -37,8 +37,15 @@ final class LLMRouter: Router {
     /// paraphrase — the field reports of "answer isn't my script" trace back to it.
     /// Uncertainty still means null: a wrong verbatim answer read aloud is worse than a
     /// grounded live one.
-    static func systemPrompt() -> String {
-        let intentList = Intents.list.joined(separator: "、")
+    static func systemPrompt(language: InterviewLanguage = Settings.interviewLanguage) -> String {
+        switch language {
+        case .japanese: systemPromptJa()
+        case .chinese: systemPromptZh()
+        }
+    }
+
+    private static func systemPromptJa() -> String {
+        let intentList = Intents.list(for: .japanese).joined(separator: "、")
         return """
         あなたは面接質問のルーターです。出力は JSON のみ。説明禁止。
         形式: {"intent":"<候補意図>","match":<候補番号 or null>}
@@ -59,28 +66,60 @@ final class LLMRouter: Router {
         """
     }
 
+    /// 中文面试的同一套路由规则。判据仍是「可答性」而非「同题性」，且不确定必须 null——
+    /// 把别人的准备稿念错，比现场生成慢一点严重得多（与日语版同一取舍）。
+    private static func systemPromptZh() -> String {
+        let intentList = Intents.list(for: .chinese).joined(separator: "、")
+        return """
+        你是面试问题的路由器。只输出 JSON，禁止解释。
+        格式: {"intent":"<候选意图>","match":<候选编号 or null>}
+        规则:
+        - intent 从以下选最接近的一个: \(intentList)
+        - 只有当该候选的准备好回答『作为对这个问题的回应直接照着念出来能成立』时，match 才填其编号。问法措辞不同没关系，只要回答正面回应了被问的内容就算 match。
+        - 用词不同但所指相同也算 match（例: 签证＝在留资格、你们公司＝贵司、外派＝调动工作地点）。
+        - 对齐时间轴: 问「入职后、将来能做什么贡献」的问题，只讲过去经历的回答不算 match；反过来，问过去经历的问题，只讲将来抱负的回答也不算 match。
+        - 问题里有「它、这个、刚才的、你刚才说的」等指向上一条回答内容的词时，按以下步骤判定:
+          步骤1: 确认上一轮对话的回答讲的是哪段经历、哪个题材（例: 读 MBA 重新学习）。
+          步骤2: 确认候选回答正文讲的是哪段经历、哪个题材（例: 系统上线延期）。
+          步骤3: 两者是同一段经历才 match，**不同经历必须 null**。即使回答的形式（讲将来如何运用等）与问题相合，念出讲另一段经历的回答就是偷换话题。
+        - 注意: 候选问题文里的「它、这个」指的是那条候选被写下时的另一个语境。问题文相似不构成 match 的依据——判定必须依据回答正文的内容。
+        - 不衔接上文就不成立的追问，没有合适候选就 null（live 生成会看着上下文回答）。
+        - 面试官问「你有什么想问我们的吗」这类问题时，准备好的反向提问候选适用。
+        - 多个候选都适用时，选编号最小的（用户自写的原稿优先）。
+        - 回答对不上、只回答了一部分、或没有把握时，match 必须是 null。
+        """
+    }
+
     /// Judging answerability requires SEEING the answer: each candidate carries the
     /// opening of its prepared answer, capped so five candidates stay a few hundred
     /// chars (prompt-processing cost is negligible against the 3s SLA).
     /// 100 字而非 60：经历一致性规则要求模型能看出「这条稿讲的是哪段经历」，
     /// 60 字常常还没露出经历的具体内容。
-    static func candidateBlock(_ candidates: [BankEntry]) -> String {
+    static func candidateBlock(_ candidates: [BankEntry],
+                               language: InterviewLanguage = Settings.interviewLanguage) -> String {
+        let (qLabel, aLabel) = language == .chinese ? ("问题", "回答开头") : ("質問", "回答冒頭")
         var cand = ""
         for (i, e) in candidates.enumerated() {
             let head = e.answer.count > 100 ? e.answer.prefix(100) + "…" : Substring(e.answer)
-            cand += "[\(i)] 質問: \(e.question)\n    回答冒頭: \(head)\n"
+            cand += "[\(i)] \(qLabel): \(e.question)\n    \(aLabel): \(head)\n"
         }
         return cand
     }
 
     func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision {
-        let cand = Self.candidateBlock(candidates)
+        let language = Settings.interviewLanguage
+        let cand = Self.candidateBlock(candidates, language: language)
         var user = ""
         if !history.isEmpty {
-            user += "直前のやり取り:\n\(history)\n\n"
+            user += language == .chinese ? "上一轮对话:\n\(history)\n\n" : "直前のやり取り:\n\(history)\n\n"
         }
-        user += "質問: \(question)\n\n候補:\n\(cand.isEmpty ? "(なし)" : cand)"
-        let raw = try await FastLLM.complete(system: Self.systemPrompt(), user: user, maxTokens: 80)
+        if language == .chinese {
+            user += "问题: \(question)\n\n候选:\n\(cand.isEmpty ? "(无)" : cand)"
+        } else {
+            user += "質問: \(question)\n\n候補:\n\(cand.isEmpty ? "(なし)" : cand)"
+        }
+        let raw = try await FastLLM.complete(system: Self.systemPrompt(language: language),
+                                             user: user, maxTokens: 80)
         let decision = parse(raw, candidates: candidates)
         return Self.vetoingContextMismatch(decision, question: question, history: history)
     }
@@ -108,10 +147,13 @@ final class LLMRouter: Router {
     }
 
     /// 问句是否指代直前的回答内容。「それでは/それじゃ」是话轮开场语，不算指代——
-    /// 只认对象格/主格的それ与明确回指的表达。
+    /// 只认对象格/主格的それ与明确回指的表达。中文标记同理：「那么/那我们」是开场语，
+    /// 不进列表；只认「刚才/刚刚/你说的那」这类明确回指。日中标记并存无害——
+    /// 日语问句里不会出现「刚才」，反之亦然。
     static func isDeictic(_ question: String) -> Bool {
         let markers = ["それを", "それが", "それって", "その経験", "その学び", "その強み",
-                       "その話", "先ほどの", "さっきの", "今の話"]
+                       "その話", "先ほどの", "さっきの", "今の話",
+                       "刚才", "刚刚", "刚提到", "你说的那", "那段经历", "那个经历", "这段经历"]
         return markers.contains(where: question.contains)
     }
 

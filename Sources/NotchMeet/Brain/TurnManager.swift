@@ -522,7 +522,10 @@ final class TurnManager: @unchecked Sendable {
         guard !history.isEmpty else { return "" }
         // Labels mark provenance honestly: 面接官 is what STT actually heard; 回答案 is the answer
         // WE suggested last turn — not necessarily what the candidate said (the app never hears them).
-        return history.suffix(4).map { "面接官: \($0.q)\n回答案: \($0.a)" }.joined(separator: "\n\n")
+        // 标签必须与 Prompts.user 里解释这两个标签的文案同语言（中文版是「面试官/建议回答」）。
+        let (qLabel, aLabel) = Settings.interviewLanguage == .chinese
+            ? ("面试官", "建议回答") : ("面接官", "回答案")
+        return history.suffix(4).map { "\(qLabel): \($0.q)\n\(aLabel): \($0.a)" }.joined(separator: "\n\n")
     }
 
     @MainActor private func failTurn(_ myEpoch: Int, error: Error) {
