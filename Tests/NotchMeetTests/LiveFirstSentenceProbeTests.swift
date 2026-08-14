@@ -10,11 +10,9 @@ import XCTest
 /// settle 余量 ~0.1s ≈ 0.8s，见 UtteranceEndpointerTests / SettleCreditTests）在此之上叠加：
 /// 断言 0.8s + 首句耗时 ≤ 3s，即国内路径整体达标。
 final class LiveFirstSentenceProbeTests: XCTestCase {
-    /// 与 TurnManager.hasSpeakableOpening 同一标准：≥12 字且含句读，或 ≥90 字。
+    /// 与 TurnManager.hasSpeakableOpening 同一标准（默认日语：≥12 字且含句读，或 ≥90 字）。
     private func speakable(_ text: String) -> Bool {
-        let boundaries = CharacterSet(charactersIn: "。！？!?\n")
-        return text.count >= 12 && text.rangeOfCharacter(from: boundaries) != nil
-            || text.count >= 90
+        TurnManager.hasSpeakableOpening(text, language: .japanese)
     }
 
     func testFirstSpeakableSentenceFitsTheThreeSecondBudget() async throws {

@@ -18,6 +18,9 @@ final class TurnManager: @unchecked Sendable {
     private let router: Router
     private let bank: AnswerBank?
     private let scriptStore: ScriptStore?
+    /// 编译好的画像索引。nil 时回退到整表 `knowledge.context` + `scriptStore.contextBlock`
+    ///（单测不必为每个回合搭一份简历）。
+    private let portrait: PortraitIndex?
     /// 供临场回看的全文记录（与下面那份喂 LLM 的摘要 `history` 分开，见 AnswerHistory）。
     private let answerHistory: AnswerHistory?
     let latency = LatencyMonitor()
@@ -98,8 +101,34 @@ final class TurnManager: @unchecked Sendable {
     }()
 
     var paused = false {
-        didSet { if paused { cancelSettle() } }   // 録音停止/デモ中: 聞きかけの発話を捨てる
+        didSet { if paused { cancelSettle(); cancelSpeculate() } }   // 録音停止/デモ中: 聞きかけの発話を捨てる
     }
+
+    // Speculative generation on a stable, complete-looking interim (PLAN §7).
+    // Fires *before* STT final + settle so LLM TTFT overlaps the endpointer.
+    // Confirmation (and any persist) waits for the coalesced final — a speculative
+    // FactQuickAnswer / cache hit must not land in SessionStore or history.
+    private var speculative = false
+    private var specQuestion = ""
+    private var specStartsThisUtterance = 0
+    private var specDebounce: DispatchWorkItem?
+    private var specCandidate = ""
+    private var persistDeferred = false
+    private var lastUsedSlotIDs: [String] = []
+    private var currentUsedSlotIDs: [String] = []
+    private var specFired = 0
+    private var specReused = 0
+    private var specMissed = 0
+    private var specRestarted = 0
+    /// 投机去抖。Natively 原型 350ms；FI_SPECULATE_MS=0 关闭。
+    private let speculateWindow: TimeInterval = {
+        if let s = ProcessInfo.processInfo.environment["FI_SPECULATE_MS"], let v = Double(s), v >= 0 {
+            return v / 1000
+        }
+        return 0.35
+    }()
+    /// 同一话轮最多开 2 次（首次 + 一次加长重启），挡住 Apple interim 的重启风暴。
+    private let maxSpecStarts = 2
 
     /// 本场会话的面试语言快照。armLive 装配时定死，与同场 STT 引擎的语言同源——
     /// 面试中途改设置只影响下一次开始录音，绝不让 prompts/history/门控在半场换语言。
@@ -111,7 +140,8 @@ final class TurnManager: @unchecked Sendable {
          router: Router = NullRouter(),
          bank: AnswerBank? = nil,
          scriptStore: ScriptStore? = nil,
-         answerHistory: AnswerHistory? = nil) {
+         answerHistory: AnswerHistory? = nil,
+         portrait: PortraitIndex? = nil) {
         self.model = model
         self.generator = generator
         self.knowledge = knowledge
@@ -119,6 +149,7 @@ final class TurnManager: @unchecked Sendable {
         self.bank = bank
         self.scriptStore = scriptStore
         self.answerHistory = answerHistory
+        self.portrait = portrait
     }
 
     /// Feed STT events. Call on the main thread. Finals are not answered immediately; they are
@@ -129,8 +160,10 @@ final class TurnManager: @unchecked Sendable {
             if sttDebug { NSLog("[stt] … %@", t.text) } // interim — FI_STT_DEBUG=1 to watch
             // 面接官がまだ話している。確定待ちの発話があれば確定を先送りし、本題まで取り込む。
             if !pendingQ.isEmpty { armSettle() }
+            armSpeculate(interim: t.text)
             return
         }
+        cancelSpeculateDebounce()
         let q = t.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isMeaningfulQuestion(q) else {
             // 与 commitPending 同一条策略：转录原文只在显式开启 STT 调试时落日志。
@@ -285,6 +318,98 @@ final class TurnManager: @unchecked Sendable {
     private func cancelSettle() {
         settleWork?.cancel(); settleWork = nil; pendingQ = ""; pendingQCompleted = false
         disarmMerge()   // a pause/stop ends the turn — never merge across it
+        cancelSpeculateDebounce()
+    }
+
+    // MARK: - Speculative open (interim)
+
+    /// Candidate text for speculation: already-finalized clauses plus the live interim.
+    /// Naked interim alone never looks complete when Deepgram splits on punctuation.
+    private func speculativeCandidate(interim: String) -> String {
+        let t = interim.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pendingQ.isEmpty { return t }
+        if t.isEmpty { return pendingQ }
+        return pendingQ + " " + t
+    }
+
+    private func armSpeculate(interim: String) {
+        guard speculateWindow > 0, !paused else { return }
+        let text = speculativeCandidate(interim: interim)
+        guard isMeaningfulQuestion(text), looksLikeCompletedPrompt(text) else {
+            cancelSpeculateDebounce()
+            return
+        }
+        // Same complete question already in flight — don't re-debounce.
+        if speculative, TurnSpeculation.covers(spec: specQuestion, final: text,
+                                               language: interviewLanguage),
+           TurnSpeculation.normalize(text) == TurnSpeculation.normalize(specQuestion) {
+            return
+        }
+        let growing = speculative && text.count >= specQuestion.count + 4
+        if growing {
+            guard specStartsThisUtterance < maxSpecStarts else { return }
+        } else if speculative {
+            // Volatile rewrite that isn't a real lengthening — wait for stability
+            // on the new string, but don't increment the restart cap until fire.
+        }
+        specCandidate = text
+        specDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.fireSpeculate() }
+        specDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + speculateWindow, execute: work)
+    }
+
+    private func fireSpeculate() {
+        specDebounce = nil
+        guard !paused, speculateWindow > 0 else { return }
+        let text = specCandidate
+        guard !text.isEmpty, isMeaningfulQuestion(text), looksLikeCompletedPrompt(text) else { return }
+        if speculative, TurnSpeculation.covers(spec: specQuestion, final: text,
+                                               language: interviewLanguage),
+           TurnSpeculation.normalize(text) == TurnSpeculation.normalize(specQuestion) {
+            return
+        }
+        if specStartsThisUtterance >= maxSpecStarts { return }
+        if speculative { specRestarted += 1 }
+        specFired += 1
+        // 只停 settle 计时，留下 pendingQ。陈述句的长窗若在投机之后到期，
+        // 会拿半截终稿去「确认」一句更长的投机问句，多问或前缀+本题都会被裁掉。
+        settleWork?.cancel(); settleWork = nil
+        startTurn(question: text, speculative: true)
+        logSpecRate(event: specStartsThisUtterance > 1 ? "restart" : "fire")
+    }
+
+    private func confirmSpeculation(finalQuestion: String) {
+        specReused += 1
+        speculative = false
+        specQuestion = ""
+        specStartsThisUtterance = 0
+        currentQuestion = finalQuestion
+        model.question = finalQuestion
+        latency.restamp(epoch, sttFinalNs: lastFinalNs)
+        logSpecRate(event: "reuse")
+        if persistDeferred {
+            persistDeferred = false
+            MainActor.assumeIsolated { persistTurn(epoch) }
+        }
+    }
+
+    private func cancelSpeculateDebounce() {
+        specDebounce?.cancel(); specDebounce = nil
+    }
+
+    private func cancelSpeculate() {
+        cancelSpeculateDebounce()
+        specCandidate = ""
+        specStartsThisUtterance = 0
+        speculative = false
+        specQuestion = ""
+        persistDeferred = false
+    }
+
+    private func logSpecRate(event: String) {
+        NSLog("[spec] %@ fired=%d reused=%d missed=%d restarted=%d",
+              event, specFired, specReused, specMissed, specRestarted)
     }
 
     /// Silence held for `settleWindow` → the interviewer finished. Commit the coalesced finals
@@ -302,7 +427,25 @@ final class TurnManager: @unchecked Sendable {
         // after should fold back in (layer 2). A completed question/request needs no net.
         lastCommittedQ = q
         if looksLikeCompletedPrompt(q) { disarmMerge() } else { armMerge() }
-        startTurn(question: q)
+        if speculative {
+            let specCoversFinal = TurnSpeculation.covers(spec: specQuestion, final: q,
+                                                         language: interviewLanguage)
+            let finalCoversSpec = TurnSpeculation.covers(spec: q, final: specQuestion,
+                                                         language: interviewLanguage)
+            if specCoversFinal && finalCoversSpec {
+                confirmSpeculation(finalQuestion: q)
+                return
+            }
+            if specCoversFinal && !finalCoversSpec {
+                // 终稿只是投机问句的前缀（陈述句 settle 抢跑）。把文本放回窗口，等后续终稿。
+                pendingQ = q
+                pendingQCompleted = looksLikeCompletedPrompt(q)
+                return
+            }
+            specMissed += 1
+            logSpecRate(event: "miss")
+        }
+        startTurn(question: q, speculative: false)
     }
 
     /// Hold the "just committed a statement" window open for `mergeGrace`; a follow-up final inside
@@ -362,7 +505,7 @@ final class TurnManager: @unchecked Sendable {
         "那我们开始吧", "我们开始吧", "那我们继续", "好的我们继续", "辛苦了",
     ]
 
-    private func startTurn(question: String) {
+    private func startTurn(question: String, speculative: Bool) {
         epoch += 1
         let myEpoch = epoch
         liveTask?.cancel(); routerTask?.cancel()
@@ -374,7 +517,17 @@ final class TurnManager: @unchecked Sendable {
         liveIsCommittedSource = false
         liveFlushScheduled = false
         liveClosed = false
-        latency.turnStart(myEpoch, sttFinalNs: lastFinalNs)
+        persistDeferred = false
+        currentUsedSlotIDs = []
+        self.speculative = speculative
+        if speculative {
+            specQuestion = question
+            specStartsThisUtterance += 1
+        } else {
+            specQuestion = ""
+            specStartsThisUtterance = 0
+        }
+        latency.turnStart(myEpoch, sttFinalNs: lastFinalNs, speculative: speculative)
 
         // 前ターンの答えはここでは消さない。新しい答えの先頭文が確定するまで（runRouter / runLive の
         // コミット点で上書き）画面に残し、考え中の一瞬だけ薄く表示する → 「答えが一度消える」体験を防ぐ。
@@ -432,26 +585,7 @@ final class TurnManager: @unchecked Sendable {
         // script are NOT sent to the cloud LLM (answers become generic).
         var ctx = ""
         if Settings.sendContextToLLM {
-            ctx = knowledge.context(for: question, language: interviewLanguage)
-            // Grounding 的排序查询按问题类型选素材：
-            // - 指代型追问（「それを弊社で…」）：素材就是**被指代的那段**——只按上一个
-            //   问题排序。这同时把「活用/貢献」形状的错位桥接稿自然挤出上下文：system
-            //   prompt 会指示模型优先照抄标题相符的准备稿，错误稿一旦进入 grounding，
-            //   路由侧的否决就会在生成侧被绕过（实机已发生）。
-            // - 普通追问：当前问题混入上一问，刚答过的条目能作为素材。
-            let prevQ = history.last?.q ?? ""
-            let groundingQuery: String
-            if prevQ.isEmpty {
-                groundingQuery = question
-            } else if LLMRouter.isDeictic(question) {
-                groundingQuery = prevQ
-            } else {
-                groundingQuery = question + " " + prevQ
-            }
-            if let script = scriptStore?.contextBlock(for: groundingQuery,
-                                                      language: interviewLanguage), !script.isEmpty {
-                ctx += (ctx.isEmpty ? "" : "\n\n") + script
-            }
+            ctx = liveContext(for: question)
         }
         let req = GenRequest(question: question, context: ctx, history: hist,
                              language: interviewLanguage)
@@ -461,6 +595,33 @@ final class TurnManager: @unchecked Sendable {
     }
 
     // MARK: - Source A: router / cache
+
+    /// Question-addressable facts + script. Portrait pack when we have an index;
+    /// otherwise the old dump + ranked script block (tests without a portrait).
+    private func liveContext(for question: String) -> String {
+        let prevQ = history.last?.q ?? ""
+        if let portrait {
+            let pinned = LLMRouter.isDeictic(question) ? lastUsedSlotIDs : []
+            let packed = portrait.pack(question: question, previousQuestion: prevQ,
+                                       pinnedIDs: pinned, language: interviewLanguage)
+            currentUsedSlotIDs = packed.usedSlotIDs
+            return packed.combined
+        }
+        var ctx = knowledge.context(for: question, language: interviewLanguage)
+        let groundingQuery: String
+        if prevQ.isEmpty {
+            groundingQuery = question
+        } else if LLMRouter.isDeictic(question) {
+            groundingQuery = prevQ
+        } else {
+            groundingQuery = question + " " + prevQ
+        }
+        if let script = scriptStore?.contextBlock(for: groundingQuery,
+                                                  language: interviewLanguage), !script.isEmpty {
+            ctx += (ctx.isEmpty ? "" : "\n\n") + script
+        }
+        return ctx
+    }
 
     /// Merge candidates for the Router: the user's hand-written script FIRST (so a tie
     /// resolves to the verbatim answer via Router's "lowest index" rule), then the AI bank.
@@ -617,11 +778,21 @@ final class TurnManager: @unchecked Sendable {
 
     /// Never reveal an unstable half-sentence. Japanese sentence punctuation is the
     /// preferred boundary; the length fallback prevents a provider that omits punctuation
-    /// from blocking the UI indefinitely.
-    private func hasSpeakableOpening(_ text: String) -> Bool {
+    /// from blocking the UI indefinitely. Chinese first sentences often wait 20–40
+    /// characters for `。`, so a shorter length fallback lets the candidate start.
+    func hasSpeakableOpening(_ text: String) -> Bool {
+        Self.hasSpeakableOpening(text, language: interviewLanguage)
+    }
+
+    static func hasSpeakableOpening(_ text: String, language: InterviewLanguage) -> Bool {
         let boundaries = CharacterSet(charactersIn: "。！？!?\n")
-        return text.count >= 12 && text.rangeOfCharacter(from: boundaries) != nil
-            || text.count >= 90
+        let punctuated = text.rangeOfCharacter(from: boundaries) != nil
+        switch language {
+        case .chinese:
+            return (text.count >= 8 && punctuated) || text.count >= 24
+        case .japanese:
+            return (text.count >= 12 && punctuated) || text.count >= 90
+        }
     }
 
     @MainActor private func finishLive(_ myEpoch: Int) {
@@ -651,16 +822,28 @@ final class TurnManager: @unchecked Sendable {
 
     @MainActor private func finishTurn(_ myEpoch: Int) {
         guard myEpoch == epoch else { return }
-        latency.turnEnd(myEpoch)
         state = .presenting
         model.status = .presenting
         model.message = .completed
+        // 投机轮可以上屏，但落史必须等终稿确认——否则半截 interim 命中事实即答
+        // 后，面试官把问句说完会再开一轮，假回合已经进了 SessionStore 且无撤回路径。
+        if speculative {
+            persistDeferred = true
+            return
+        }
+        persistTurn(myEpoch)
+    }
+
+    @MainActor private func persistTurn(_ myEpoch: Int) {
+        guard myEpoch == epoch else { return }
+        latency.turnEnd(myEpoch)
         recordHistory()
         // 全文入回看记录。传 epoch 而不是问题文本：迟到的原稿命中会让同一轮再次定稿，
         // 按 epoch 就地更新才不会把同一轮堆成两条（面试官重复同一问题时也不会误合并）。
         answerHistory?.record(epoch: myEpoch, question: currentQuestion,
                               answer: model.answer, intent: model.intentLabel)
         onTurnRecorded?(currentQuestion, model.answer, currentSource)
+        if !currentUsedSlotIDs.isEmpty { lastUsedSlotIDs = currentUsedSlotIDs }
     }
 
     private func recordHistory() {

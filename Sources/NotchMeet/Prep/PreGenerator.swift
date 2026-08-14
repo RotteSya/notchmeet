@@ -120,8 +120,8 @@ final class PreGenerator {
                         user = "问题: \(intent)\n\n请只输出可以直接照着说出口的完整回答正文。"
                     }
                     answer = try await FastLLM.complete(
-                        system: Prompts.system(context: context, language: language),
-                        user: user,
+                        system: Prompts.system(language: language),
+                        user: (context.isEmpty ? "" : context + "\n\n") + user,
                         maxTokens: 400)
                 }
                 let spoken = SpokenAnswerFormatter.normalize(answer)
@@ -155,8 +155,8 @@ final class PreGenerator {
         switch language {
         case .chinese:
             return """
-            \(Prompts.system(context: context, language: language))
-
+            \(Prompts.system(language: language))
+            \(context.isEmpty ? "" : "\n# 事实信息（简历/自我分析）\n\(context)\n")
             # 面试官的问题
             \(intent)
 
@@ -165,8 +165,8 @@ final class PreGenerator {
             """
         case .japanese:
             return """
-            \(Prompts.system(context: context, language: language))
-
+            \(Prompts.system(language: language))
+            \(context.isEmpty ? "" : "\n# 事実情報（ES/自己分析）\n\(context)\n")
             # 面接官の質問
             \(intent)
 

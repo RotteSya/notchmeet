@@ -79,4 +79,14 @@ final class PromptsTests: XCTestCase {
         let system = Prompts.system(context: "何か")
         XCTAssertTrue(system.contains("別の経験・別の文脈**を語る原稿は使わない"))
     }
+
+    /// Live 路径的 system 必须整场稳定：空 context 不得再塞事实段。
+    func testEmptyContextKeepsSystemFreeOfFactDump() {
+        let system = Prompts.system()
+        XCTAssertFalse(system.contains("# 事実情報（ES/自己分析）"))
+        XCTAssertTrue(system.contains("事実情報"))   // 规则仍点名这块素材
+        let user = Prompts.user(question: "強みは？", history: "", context: "強み: 実行力")
+        XCTAssertTrue(user.contains("# 事実情報（ES/自己分析）"))
+        XCTAssertTrue(user.contains("強み: 実行力"))
+    }
 }

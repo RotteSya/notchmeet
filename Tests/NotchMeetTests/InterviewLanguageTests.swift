@@ -83,6 +83,7 @@ final class InterviewLanguageTests: XCTestCase {
     func testChineseSystemPromptKeepsTheContract() {
         let system = Prompts.system(context: "", language: .chinese)
         XCTAssertTrue(system.contains("只用中文输出"))
+        XCTAssertFalse(system.contains("综合岗位"), "中文不再套用就活综合职角色")
         XCTAssertTrue(system.contains("不再重复"), "缺少「不复读」指令")
         XCTAssertTrue(system.contains("按被问到的顺序逐一简洁作答"), "缺少「逐一作答」指令")
         XCTAssertTrue(system.contains("不许只答其中一个而漏掉其余"), "缺少「不得漏答」指令")
@@ -251,6 +252,17 @@ final class InterviewLanguageTests: XCTestCase {
         XCTAssertFalse(zh.contains("自己分析メモ"), "中文面试不许出现日语标签")
         let ja = s.context(for: "", language: .japanese)
         XCTAssertTrue(ja.contains("自己分析メモ:"), "日语标签维持原行为")
+    }
+
+    func testChineseSpeakableOpeningIsShorterThanJapanese() {
+        let mid = String(repeating: "我", count: 24)
+        XCTAssertTrue(TurnManager.hasSpeakableOpening(mid, language: .chinese),
+                      "24 个汉字已够开口，不必等句号")
+        XCTAssertFalse(TurnManager.hasSpeakableOpening(mid, language: .japanese),
+                       "日语维持 12+句读 / 90 字")
+        XCTAssertTrue(TurnManager.hasSpeakableOpening("这是一句完整的话。", language: .chinese))
+        XCTAssertFalse(TurnManager.hasSpeakableOpening("还不够", language: .chinese))
+        XCTAssertFalse(TurnManager.hasSpeakableOpening(String(repeating: "我", count: 23), language: .chinese))
     }
 
     /// 中文寒暄不许触发真回合（取消在途生成 + 烧计费调用 + 污染 history）。

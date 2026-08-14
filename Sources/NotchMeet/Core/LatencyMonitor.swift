@@ -36,6 +36,10 @@ final class LatencyMonitor {
         var sttFinal: UInt64
         var kind: TurnKind?
         var first: Double?
+        /// Wall time of `markFirstReadable`, so `restamp` can recompute `first`
+        /// after speculative T0 is replaced by the real last-phoneme.
+        var firstMarkNs: UInt64?
+        var speculative: Bool
     }
     private var turns: [Int: Turn] = [:]
 
@@ -45,7 +49,35 @@ final class LatencyMonitor {
     private var coldDone = false
 
     /// - Parameter sttFinalNs: 最后一个终稿到达的 uptime；0 = 未知（退化为不拆分）。
-    func turnStart(_ epoch: Int, sttFinalNs: UInt64 = 0) {
+    /// - Parameter speculative: 投机开轮时人还在说话，voicedClock / lastFinal 都是
+    ///   上一轮或「此刻仍在发声」的噪声。不算进 R1 慢终稿，等 `restamp` 用真终稿重盖。
+    func turnStart(_ epoch: Int, sttFinalNs: UInt64 = 0, speculative: Bool = false) {
+        let clock = stamp(sttFinalNs: sttFinalNs)
+        turns[epoch] = Turn(t0: clock.t0, endpoint: clock.endpoint, sttFinal: clock.final,
+                            kind: nil, first: nil, firstMarkNs: nil, speculative: speculative)
+        guard !speculative else { return }
+        let sttLag = ms(clock.t0, clock.final)
+        if sttLag > 0 { onSttFinalDelay?(sttLag) }
+    }
+
+    /// Settle 确认投机问句之后：用真正的最后音素 / 本轮终稿重盖 T0。
+    /// 已经记过的 first_readable 按新 T0 重算（答案比话音更早出来时钳到 0）。
+    func restamp(_ epoch: Int, sttFinalNs: UInt64) {
+        guard var t = turns[epoch] else { return }
+        let clock = stamp(sttFinalNs: sttFinalNs)
+        t.t0 = clock.t0
+        t.endpoint = clock.endpoint
+        t.sttFinal = clock.final
+        t.speculative = false
+        if let mark = t.firstMarkNs {
+            t.first = mark >= clock.t0 ? ms(clock.t0, mark) : 0
+        }
+        turns[epoch] = t
+        let sttLag = ms(clock.t0, clock.final)
+        if sttLag > 0 { onSttFinalDelay?(sttLag) }
+    }
+
+    private func stamp(sttFinalNs: UInt64) -> (t0: UInt64, endpoint: UInt64, final: UInt64) {
         let endpoint = DispatchTime.now().uptimeNanoseconds
         var t0 = voicedClock?() ?? 0
         // Fall back to endpoint when there's no audio path (0), a future stamp, or a
@@ -54,22 +86,22 @@ final class LatencyMonitor {
         // 钳进 [t0, endpoint]：终稿早于最后一个音素（VAD 比 STT 端点器更敏感时可能
         // 发生）或晚于提交都不是有意义的拆分点，此时把整段算作 STT 交付。
         let final = (sttFinalNs >= t0 && sttFinalNs <= endpoint) ? sttFinalNs : endpoint
-        turns[epoch] = Turn(t0: t0, endpoint: endpoint, sttFinal: final, kind: nil, first: nil)
-        let sttLag = ms(t0, final)
-        if sttLag > 0 { onSttFinalDelay?(sttLag) }
+        return (t0, endpoint, final)
     }
 
     func markFirstReadable(epoch: Int, kind: TurnKind) {
         guard var t = turns[epoch], t.first == nil else { return }
-        let first = ms(t.t0, DispatchTime.now().uptimeNanoseconds)
+        let now = DispatchTime.now().uptimeNanoseconds
+        let first = now >= t.t0 ? ms(t.t0, now) : 0
         let endpointDelay = ms(t.t0, t.endpoint)
         let sttLag = ms(t.t0, t.sttFinal)          // 等 STT 交付终稿（外部）
         let settleWait = ms(t.sttFinal, t.endpoint) // 我们自己的 settle 等待（可调）
-        t.first = first; t.kind = kind
+        t.first = first; t.kind = kind; t.firstMarkNs = now
         turns[epoch] = t
-        NSLog("[latency] turn %d (%@) first_readable=%dms (stt=%dms + settle=%dms + gen=%dms)",
+        NSLog("[latency] turn %d (%@) first_readable=%dms (stt=%dms + settle=%dms + gen=%dms)%@",
               epoch, kind.rawValue, Int(first),
-              Int(sttLag), Int(settleWait), Int(first - endpointDelay))
+              Int(sttLag), Int(settleWait), Int(first - endpointDelay),
+              t.speculative ? " spec" : "")
     }
 
     func turnEnd(_ epoch: Int) {

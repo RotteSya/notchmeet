@@ -11,6 +11,7 @@ final class AppController {
     private let facts = FactStore()
     private let bank = AnswerBank()
     private let scriptStore = ScriptStore()
+    private let portrait = PortraitIndex()
     private let control = ControlPanel()
     private let inactivity = InactivityMonitor()
     /// 本场已显示过的回答（全文，仅内存）。被追问打断时用 ⌘⇧B 回看上一条。
@@ -46,6 +47,7 @@ final class AppController {
     private var armedInterviewLanguage: InterviewLanguage = .japanese
     private var sttSwitchRevertWork: DispatchWorkItem?
     private var languageCancellable: AnyCancellable?
+    private var portraitCancellable: AnyCancellable?
     private let credit = CreditManager.shared
     private var creditCancellables = Set<AnyCancellable>()
     private var creditLowRevertWork: DispatchWorkItem?
@@ -63,6 +65,7 @@ final class AppController {
         installEditMenu()
         installControls()
         observeLanguageChanges()
+        observePortraitSources()
         if ProcessInfo.processInfo.environment["FI_PREP"] == "1" { runPrep() }
         reloadPipeline()
         // Dev-only visual-QA hook: open settings straight to a section so the redesign can be
@@ -123,6 +126,18 @@ final class AppController {
                 self?.installEditMenu()
                 self?.control.refreshLocalization()
             }
+    }
+
+    /// 设置窗共享 live `scriptStore`：改条目/换稿下一轮就要生效，画像必须跟着重建。
+    /// 开录快照会再编一次（待机期间改了简历、还没 reloadPipeline 的路径）。
+    private func observePortraitSources() {
+        portraitCancellable = scriptStore.$library
+            .sink { [weak self] _ in self?.rebuildPortrait() }
+    }
+
+    private func rebuildPortrait() {
+        let lang = recording ? armedInterviewLanguage : Settings.interviewLanguage
+        portrait.rebuild(sheet: facts.sheet, script: scriptStore.active, language: lang)
     }
 
     private func installControls() {
@@ -252,6 +267,7 @@ final class AppController {
         // 热词取开录一刻的最新值：最常见的「填完简历事实/换稿 → 直接开始录音」流程
         // 不经过 reloadPipeline，arm 时下发的那份是旧快照。
         stt.setVocabulary(sttContextualVocabulary())
+        rebuildPortrait()
         do {
             // Open the audio tap FIRST so that "no call app to capture" throws before the STT
             // socket opens — we never start uploading when there is nothing to capture.
@@ -671,9 +687,10 @@ final class AppController {
     /// presses Start (⌘⇧P / notch) to begin, same gate as the live pipeline.
     private func armPipeline(stt: SttClient, generator: AnswerGenerator) {
         armedInterviewLanguage = Settings.interviewLanguage
+        rebuildPortrait()
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
-                             answerHistory: answerHistory)
+                             answerHistory: answerHistory, portrait: portrait)
         tm.interviewLanguage = armedInterviewLanguage
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
@@ -721,9 +738,10 @@ final class AppController {
         armedInterviewLanguage = Settings.interviewLanguage
         let generator = ProviderRegistry.makeGenerator()
         let sttc = ProviderRegistry.makeStt()
+        rebuildPortrait()
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
-                             answerHistory: answerHistory)
+                             answerHistory: answerHistory, portrait: portrait)
         tm.interviewLanguage = armedInterviewLanguage
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
