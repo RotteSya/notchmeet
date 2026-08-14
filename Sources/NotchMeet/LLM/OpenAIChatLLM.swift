@@ -83,9 +83,9 @@ final class OpenAIChatAnswerGenerator: AnswerGenerator {
 
     func generate(_ req: GenRequest, epoch: Int, onDelta: @escaping (String) -> Void) async throws {
         let body = OpenAIChat.body(endpoint,
-                                   system: Prompts.system(context: req.context, language: req.language),
+                                   system: Prompts.system(language: req.language),
                                    user: Prompts.user(question: req.question, history: req.history,
-                                                      language: req.language),
+                                                      context: req.context, language: req.language),
                                    maxTokens: 512, temperature: 0.5, stream: true)
         let request = try OpenAIChat.request(endpoint, apiKey: apiKey, body: body)
         // 域内端点直连，绕过全局梯子（见 LLMHTTP.directSession）。

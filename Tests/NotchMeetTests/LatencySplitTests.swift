@@ -59,6 +59,35 @@ final class LatencySplitTests: XCTestCase {
         m.turnEnd(4)
     }
 
+    /// 投机开轮不得把上一轮终稿 / 「人还在说话」的 voicedClock 喂给 R1。
+    func testSpeculativeStartDoesNotReportSttDelayUntilRestamp() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let m = monitor(lastVoiced: now &- 8000 * ms)   // would look like an 8s STT lag
+        var reported: [Double] = []
+        m.onSttFinalDelay = { reported.append($0) }
+        m.turnStart(9, sttFinalNs: now &- 7000 * ms, speculative: true)
+        XCTAssertTrue(reported.isEmpty, "speculative T0 is noise — must not feed SttHealthTracker")
+        // Confirm-time clock is the real last phoneme, not the speculative "still talking" stamp.
+        let confirm = DispatchTime.now().uptimeNanoseconds
+        m.voicedClock = { confirm &- 400 * self.ms }
+        m.restamp(9, sttFinalNs: confirm &- 200 * ms)
+        XCTAssertEqual(reported.count, 1, "confirming restamp reports the real STT lag")
+        XCTAssertLessThan(reported[0], 2000, "restamped lag should be the confirming final, not the stale 7s")
+    }
+
+    /// 答案在话音落点之前就上屏时，first_readable 钳到 0，而不是负数。
+    func testRestampClampsFirstReadableWhenAnswerBeatThePhoneme() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let m = monitor(lastVoiced: now &- 5000 * ms)
+        m.turnStart(10, sttFinalNs: now &- 4000 * ms, speculative: true)
+        m.markFirstReadable(epoch: 10, kind: .live)
+        // Confirm against a T0 that is *later* than the first-readable mark
+        // (interviewer kept talking after we already had a sentence).
+        m.voicedClock = { DispatchTime.now().uptimeNanoseconds }
+        m.restamp(10, sttFinalNs: DispatchTime.now().uptimeNanoseconds)
+        m.turnEnd(10)
+    }
+
     /// 冷启动仍然被排除在百分位之外——拆分不该影响这条既有约定。
     func testColdStartStillExcluded() {
         let now = DispatchTime.now().uptimeNanoseconds

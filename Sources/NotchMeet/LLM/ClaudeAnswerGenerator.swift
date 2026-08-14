@@ -16,8 +16,8 @@ final class ClaudeAnswerGenerator: AnswerGenerator {
             "model": model,
             "max_tokens": 512,
             "stream": true,
-            "system": Prompts.system(context: req.context, language: req.language),
-            "messages": [["role": "user", "content": Prompts.user(question: req.question, history: req.history, language: req.language)]],
+            "system": Prompts.system(language: req.language),
+            "messages": [["role": "user", "content": Prompts.user(question: req.question, history: req.history, context: req.context, language: req.language)]],
         ]
         let request = try LLMHTTP.post(url, headers: ClaudeEndpoint.headers(apiKey), body: body)
         try await LLMHTTP.streamSSE(request, extract: Self.delta, onDelta: onDelta)
