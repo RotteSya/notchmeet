@@ -40,15 +40,13 @@ final class GeneralSection: SectionScroll {
         constrain(seg, width: 204, height: 30)
 
         // 面试语言：决定 STT 识别语言与 AI 回答语言，下一次开始录音生效。
-        // 与界面语言独立——界面中文、面试日语是主流用法。
-        let interviewLangs: [InterviewLanguage] = [.japanese, .chinese]
+        // 与界面语言独立——界面中文、面试日语是主流用法。setter 自己广播刷新，
+        // 语言表取 allCases——新增语言时选择器自动出现，不靠人记得来补数组。
+        let interviewLangs = InterviewLanguage.allCases
         let interviewSeg = SKSegmented(
             titles: interviewLangs.map { s.interviewLanguageName($0) },
             selected: interviewLangs.firstIndex(of: Settings.interviewLanguage) ?? 0) { idx in
             Settings.interviewLanguage = interviewLangs[idx]
-            // 界面语言行的摘要（「面试与回答：…」）与 STT 相关帮助文案引用了面试语言，
-            // 走与界面语言切换同一条重建路径即时刷新。
-            NotificationCenter.default.post(name: .nmInterviewLanguageChanged, object: nil)
         }
         constrain(interviewSeg, width: 204, height: 30)
 

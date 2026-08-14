@@ -40,6 +40,10 @@ final class AppController {
     private var sttHealth = SttHealthTracker()
     /// 本场是否已尝试过热切换（成败都算）。切换是一次性止损，不反复横跳。
     private var sttDegradedThisSession = false
+    /// 管线装配那一刻的面试语言快照。STT/路由/TurnManager 的语言全部以它为源——
+    /// 待机期间用户改了设置，由 `startRecording` 兑现「下一次开始录音时生效」的承诺
+    /// （重建管线）；录音中改设置对本场无效（含 R1 热切换，见 `degradeSttToApple`）。
+    private var armedInterviewLanguage: InterviewLanguage = .japanese
     private var sttSwitchRevertWork: DispatchWorkItem?
     private var languageCancellable: AnyCancellable?
     private let credit = CreditManager.shared
@@ -222,6 +226,14 @@ final class AppController {
 
     /// Open the audio tap + STT socket and begin uploading the call-app channel.
     private func startRecording() {
+        // 待机期间面试语言被改过 → 兑现设置页「下一次开始录音时生效」的承诺：
+        // 就地重建管线（STT 语言/路由 prompt/回合门控随新语言重新装配），再继续开始。
+        // reloadPipeline 未在录音时是纯重装配，不触碰音频权限与计量。
+        if !recording, stt != nil, armedInterviewLanguage != Settings.interviewLanguage {
+            NSLog("[live] interview language changed (%@ → %@) — re-arming pipeline before start",
+                  armedInterviewLanguage.rawValue, Settings.interviewLanguage.rawValue)
+            reloadPipeline()
+        }
         guard let stt, !recording else { return }
         // 额度硬闸：本场会用到受管服务且余额为 0 → 不开始，引导充值。
         // 全 BYO/本地的会话不经过这道闸（不计量的东西永远不拦）。
@@ -477,7 +489,8 @@ final class AppController {
     }
 
     private func makeRouter() -> Router {
-        ProviderRegistry.llmResolution() != .none ? LLMRouter() : NullRouter()
+        ProviderRegistry.llmResolution() != .none
+            ? LLMRouter(language: armedInterviewLanguage) : NullRouter()
     }
 
     /// Open the settings window (optionally at a section). Lazily created and reused; shares
@@ -634,9 +647,11 @@ final class AppController {
     /// Wire a mock STT → TurnManager → notch, but leave it armed (not started): the user
     /// presses Start (⌘⇧P / notch) to begin, same gate as the live pipeline.
     private func armPipeline(stt: SttClient, generator: AnswerGenerator) {
+        armedInterviewLanguage = Settings.interviewLanguage
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.interviewLanguage = armedInterviewLanguage
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
         }
@@ -679,11 +694,14 @@ final class AppController {
     /// armed-and-silent until the user explicitly starts recording (privacy default, option A).
     private func armLive() {
         prewarmLLM()
+        // 快照先行：makeStt/makeRouter/TurnManager 三者的语言必须取自同一时刻。
+        armedInterviewLanguage = Settings.interviewLanguage
         let generator = ProviderRegistry.makeGenerator()
         let sttc = ProviderRegistry.makeStt()
         let tm = TurnManager(model: notch.model, generator: generator,
                              knowledge: facts, router: makeRouter(), bank: bank, scriptStore: scriptStore,
                              answerHistory: answerHistory)
+        tm.interviewLanguage = armedInterviewLanguage
         tm.onTurnRecorded = { [weak self] q, a, source in
             self?.sessions.record(question: q, answer: a, source: source)
         }
@@ -800,7 +818,8 @@ final class AppController {
     /// 成败都只尝试一次：切换是止损动作，反复横跳只会把两边的冷启动都吃一遍。
     private func degradeSttToApple() {
         sttDegradedThisSession = true
-        let locale = Settings.interviewLanguage.appleLocaleID
+        // 用会话快照而非当前设置：面试中途改语言不许把本场日语音频接给中文识别器。
+        let locale = armedInterviewLanguage.appleLocaleID
         guard AppleSpeechSttClient.isReadyForHotSwap(localeID: locale) else {
             // 权限没给过 / 端侧资产没装：中途弹权限框或触发几百 MB 下载比慢更糟。
             // 留在 Deepgram（慢但在工作），只记日志供复盘。

@@ -4,40 +4,55 @@ import XCTest
 /// 中文面试语言（`InterviewLanguage.chinese`）的接线测试：STT 语言码、提示词契约、
 /// 路由器指代检测、事实即答成句——每一处此前写死日语的接点都要能按设置切换，
 /// 且默认值必须保持 `.japanese`（既有安装行为不变）。
+///
+/// 语言偏好经 `Settings.languageDefaults` 存取；这里换成独立 suite——它是本套件
+/// 会真实改写的全局状态，并行测试进程共享持久域，不隔离会让「zh」泄漏进
+/// 断言默认日语的兄弟套件（PromptsTests / LocalizationTests …）。
 final class InterviewLanguageTests: XCTestCase {
 
-    private var savedLanguage: String?
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
-        savedLanguage = UserDefaults.standard.string(forKey: "nm_interview_language")
+        suiteName = "nm-test-\(UUID().uuidString)"
+        Settings.languageDefaults = UserDefaults(suiteName: suiteName)!
     }
 
     override func tearDown() {
-        if let v = savedLanguage {
-            UserDefaults.standard.set(v, forKey: "nm_interview_language")
-        } else {
-            UserDefaults.standard.removeObject(forKey: "nm_interview_language")
-        }
+        Settings.languageDefaults.removePersistentDomain(forName: suiteName)
+        Settings.languageDefaults = .standard
         super.tearDown()
     }
 
     // MARK: - Settings
 
     func testDefaultInterviewLanguageIsJapanese() {
-        UserDefaults.standard.removeObject(forKey: "nm_interview_language")
         XCTAssertEqual(Settings.interviewLanguage, .japanese)
     }
 
     func testInterviewLanguagePersists() {
         Settings.interviewLanguage = .chinese
         XCTAssertEqual(Settings.interviewLanguage, .chinese)
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "nm_interview_language"), "zh")
+        XCTAssertEqual(Settings.languageDefaults.string(forKey: "nm_interview_language"), "zh")
     }
 
     func testUnknownStoredValueFallsBackToJapanese() {
-        UserDefaults.standard.set("ko", forKey: "nm_interview_language")
+        Settings.languageDefaults.set("ko", forKey: "nm_interview_language")
         XCTAssertEqual(Settings.interviewLanguage, .japanese)
+    }
+
+    /// setter 自己广播（与 answerTextSize 同一模式）：任何写入者都不可能忘记通知。
+    func testSettingInterviewLanguagePostsChangeNotification() {
+        let exp = expectation(forNotification: .nmInterviewLanguageChanged, object: nil)
+        Settings.interviewLanguage = .chinese
+        wait(for: [exp], timeout: 1.0)
+    }
+
+    /// 预生成库的语言戳：默认日语（既有安装的库全是旧日语版本）。
+    func testAnswerBankLanguageDefaultsToJapanese() {
+        XCTAssertEqual(Settings.answerBankLanguage, .japanese)
+        Settings.answerBankLanguage = .chinese
+        XCTAssertEqual(Settings.answerBankLanguage, .chinese)
     }
 
     // MARK: - STT 语言码
@@ -47,6 +62,12 @@ final class InterviewLanguageTests: XCTestCase {
         XCTAssertEqual(InterviewLanguage.chinese.deepgramCode, "zh-CN")
         XCTAssertEqual(InterviewLanguage.japanese.appleLocaleID, "ja-JP")
         XCTAssertEqual(InterviewLanguage.chinese.appleLocaleID, "zh-CN")
+    }
+
+    /// 关键词 boost 必须与识别语言同语种：中文会话不下发日语就活词表。
+    func testDeepgramBoostKeywordsFollowLanguage() {
+        XCTAssertFalse(DeepgramSttClient.boostKeywords(for: "ja").isEmpty)
+        XCTAssertTrue(DeepgramSttClient.boostKeywords(for: "zh-CN").isEmpty)
     }
 
     // MARK: - 意图表
@@ -117,6 +138,67 @@ final class InterviewLanguageTests: XCTestCase {
         XCTAssertTrue(block.contains("回答开头: 面试官您好"))
     }
 
+    /// 中文没有假名分词，整串比对的内容词重叠恒为 0——必须按 bigram 切分，
+    /// 否则指代型追问的正确原稿命中会被无条件否决（本次修复的回归锚点）。
+    func testChineseDeicticVetoSparesSameExperienceMatch() {
+        let history = "面试官: 请谈谈你的实习。\n建议回答: 我在实习期间负责数据分析，独立完成了三个报表。"
+        let match = RouteDecision(intent: "实习",
+                                  matchedAnswer: "那段实习中我主要负责数据分析，最大的收获是把报表流程自动化。")
+        let kept = LLMRouter.vetoingContextMismatch(match,
+                                                    question: "刚才提到的那段经历，能用在贵司吗？",
+                                                    history: history, language: .chinese)
+        XCTAssertNotNil(kept.matchedAnswer, "同一段经历的命中被误杀")
+    }
+
+    /// 反向：讲另一段经历的稿件仍要被否决（否决线的本职）。
+    func testChineseDeicticVetoKillsDifferentExperienceMatch() {
+        let history = "面试官: 请谈谈你的实习。\n建议回答: 我在实习期间负责数据分析，独立完成了三个报表。"
+        let wrong = RouteDecision(intent: "留学",
+                                  matchedAnswer: "在留学期间我组织了志愿者活动，学会了跨文化沟通。")
+        let vetoed = LLMRouter.vetoingContextMismatch(wrong,
+                                                      question: "刚才提到的那段经历，能用在贵司吗？",
+                                                      history: history, language: .chinese)
+        XCTAssertNil(vetoed.matchedAnswer, "另一段经历的错误命中没有被否决")
+    }
+
+    // MARK: - 回合门控（中文）
+
+    @MainActor
+    private func makeTurnManager(_ language: InterviewLanguage) -> TurnManager {
+        let tm = TurnManager(model: AnswerModel(), generator: MockAnswerGenerator())
+        tm.interviewLanguage = language
+        return tm
+    }
+
+    /// 端侧 zh-CN 终稿常无问号；语气助词/疑问词/祈使型必须被识别为「交棒」，
+    /// 否则每个中文问题都吃满长 settle 窗口、冲击 3s SLA。
+    @MainActor
+    func testChineseQuestionsCountAsCompletedPrompts() {
+        let tm = makeTurnManager(.chinese)
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("请介绍一下你自己"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("你的期望薪资是多少"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("你觉得自己最大的优点是什么"))
+        XCTAssertTrue(tm.looksLikeCompletedPrompt("方便说说离职原因吗"))
+        // 陈述句不是交棒——长窗口等后续本题。
+        XCTAssertFalse(tm.looksLikeCompletedPrompt("我们公司主要做跨境电商"))
+        // 日语路径不受影响。
+        let ja = makeTurnManager(.japanese)
+        XCTAssertTrue(ja.looksLikeCompletedPrompt("自己紹介をお願いします"))
+        XCTAssertFalse(ja.looksLikeCompletedPrompt("弊社は小売業を営んでおります"))
+    }
+
+    /// 中文寒暄不许触发真回合（取消在途生成 + 烧计费调用 + 污染 history）。
+    @MainActor
+    func testChineseBackchannelsAreNotMeaningfulQuestions() {
+        let tm = makeTurnManager(.chinese)
+        XCTAssertFalse(tm.isMeaningfulQuestion("好的，我明白了。"))
+        XCTAssertFalse(tm.isMeaningfulQuestion("谢谢您的回答。"))
+        XCTAssertFalse(tm.isMeaningfulQuestion("那我们开始吧。"))
+        XCTAssertTrue(tm.isMeaningfulQuestion("请介绍一下你自己。"))
+        // 日语表目原样有效。
+        XCTAssertFalse(tm.isMeaningfulQuestion("よろしくお願いします。"))
+    }
+
     // MARK: - 事实即答（中文成句）
 
     private var dir: String!
@@ -154,6 +236,18 @@ final class InterviewLanguageTests: XCTestCase {
         XCTAssertEqual(FactQuickAnswer.answer(for: "期望薪资是多少？", facts: facts,
                                               language: .chinese),
                        "按贵司的薪酬标准即可。")
+    }
+
+    /// 假名护栏：为日语面试写的事实（值/标签含かな）在中文面试里不即答——
+    /// 中日混排句命中即定稿、没有生成兜底，宁可交给 LLM 用事实以中文重述。
+    func testChineseQuickAnswerRefusesKanaFacts() {
+        let facts = store("希望年収: 御社の規定に従います")
+        XCTAssertNil(FactQuickAnswer.answer(for: "您的期望薪资是多少？", facts: facts,
+                                            language: .chinese))
+        // 同一条事实在日语面试照常即答。
+        XCTAssertEqual(FactQuickAnswer.answer(for: "年収のご希望は？", facts: facts,
+                                              language: .japanese),
+                       "御社の規定に従います")
     }
 
     // MARK: - UI 文案跟随面试语言

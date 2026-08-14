@@ -69,20 +69,29 @@ enum FactQuickAnswer {
     /// 書いてあればそのまま使う。テンプレートは読み上げて自然になるものだけを特別扱いし、
     /// それ以外は「〜は〜です」の汎用形（どのラベルでも文法的に成立する）。
     private static func sentence(label: String, value: String,
-                                 language: InterviewLanguage) -> String {
+                                 language: InterviewLanguage) -> String? {
+        // 中文面试 + 日语写的事实（老用户的「希望年収: 御社の規定に従います」）：
+        // 中日混排句照读必穿帮，且即答命中即定稿、没有生成兜底来纠正——宁可不命中，
+        // 返回 nil 交给 LLM 拿事实做 grounding 以中文重述。假名是可靠的日语信号；
+        // 纯汉字的日语标签（希望年収）可读性尚可，保留通用模板。
+        if language == .chinese, containsKana(label) || containsKana(value) { return nil }
+
         // 値そのものが既に一文なら、テンプレートに押し込まない。
         // 「希望年収: 御社の規定に従います」を「〜を希望しております」に嵌めると
         // 「御社の規定に従いますを希望しております」という破格になる。
         if isCompleteSentence(value) { return value }
 
         let l = QuestionMatcher.normalized(label)
-        // 中文面试：通用形「〜是〜。」对任何标签都成句（入职时间是2027年4月。），
-        // 不需要日语那套愿望形/入社形的特判——特判是敬语语法逼出来的。
-        if language == .chinese {
-            if l.contains("入社") || l.contains("入职") || l.contains("到岗") || l.contains("いつから") {
+        switch language {
+        case .chinese:
+            // 通用形「〜是〜。」对任何标签都成句（入职时间是2027年4月。），
+            // 不需要日语那套愿望形/入社形的特判——特判是敬语语法逼出来的。
+            if l.contains("入社") || l.contains("入职") || l.contains("到岗") {
                 return "\(value)起可以入职。"
             }
             return "\(label)是\(value)。"
+        case .japanese:
+            break
         }
         if l.contains("入社") || l.contains("着任") || l.contains("いつから") {
             return "\(value)から入社可能です。"
@@ -95,6 +104,11 @@ enum FactQuickAnswer {
             return "\(value)を希望しております。"
         }
         return "\(label)は\(value)です。"
+    }
+
+    /// 日本語専用の文字（かな）を含むか。中文即答の混排ガードに使う。
+    private static func containsKana(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x3040...0x30ff).contains($0.value) }
     }
 
     /// 値が既に敬体の一文かどうか。句点で終わる、または です／ます 系で終わるもの。

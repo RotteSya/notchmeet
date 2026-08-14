@@ -111,9 +111,13 @@ final class PreGenerator {
                 case .localCLI(let name, let path):
                     answer = try await CliRunner.run(cli: name, binPath: path, prompt: prompt)
                 case .managed, .unavailable:
-                    let user = language == .chinese
-                        ? "问题: \(intent)\n\n请只输出可以直接照着说出口的完整回答正文。"
-                        : "質問: \(intent)\n\nそのまま声に出して答えられる完成した回答文だけを出力してください。"
+                    let user: String
+                    switch language {
+                    case .japanese:
+                        user = "質問: \(intent)\n\nそのまま声に出して答えられる完成した回答文だけを出力してください。"
+                    case .chinese:
+                        user = "问题: \(intent)\n\n请只输出可以直接照着说出口的完整回答正文。"
+                    }
                     answer = try await FastLLM.complete(
                         system: Prompts.system(context: context, language: language),
                         user: user,
@@ -137,12 +141,18 @@ final class PreGenerator {
             return
         }
         await bank.replaceAll(out)   // 主线程写：与 TurnManager 的读同域
-        NSLog("[prep] answer bank built: %d/%d intents", out.count, intents.count)
+        // 语言戳与库内容同步落盘：路由取候选时与本场面试语言比对，不一致整库跳过
+        // ——日语库的答案在中文面试里被逐字上屏是最糟的串场（BankEntry 本身没有
+        // 语言字段，库是整体重建的，戳在库粒度上即可）。
+        Settings.answerBankLanguage = language
+        NSLog("[prep] answer bank built: %d/%d intents (%@)", out.count, intents.count,
+              language.rawValue)
     }
 
     private func buildPrompt(intent: String, context: String,
                              language: InterviewLanguage) -> String {
-        if language == .chinese {
+        switch language {
+        case .chinese:
             return """
             \(Prompts.system(context: context, language: language))
 
@@ -152,15 +162,16 @@ final class PreGenerator {
             请只以上述事实信息为依据，写出可以直接照着说出口的自然回答。
             只输出 2〜5 句连续的口语正文，不使用条目、编号、标题或 Markdown。
             """
+        case .japanese:
+            return """
+            \(Prompts.system(context: context, language: language))
+
+            # 面接官の質問
+            \(intent)
+
+            上記の事実情報だけを根拠に、そのまま声に出して答えられる自然な回答文を作成してください。
+            2〜5文の連続した話し言葉だけを出力し、箇条書き・番号・見出し・Markdownは使用しないでください。
+            """
         }
-        return """
-        \(Prompts.system(context: context, language: language))
-
-        # 面接官の質問
-        \(intent)
-
-        上記の事実情報だけを根拠に、そのまま声に出して答えられる自然な回答文を作成してください。
-        2〜5文の連続した話し言葉だけを出力し、箇条書き・番号・見出し・Markdownは使用しないでください。
-        """
     }
 }

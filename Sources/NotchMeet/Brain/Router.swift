@@ -31,13 +31,21 @@ final class NullRouter: Router {
 /// Single fast LLM call returns BOTH the intent and the match index (merged, per
 /// §7 / §14.3 — no serial two-hop). Biased to answer `null` unless certain.
 final class LLMRouter: Router {
+    /// 会话快照的面试语言：armLive 时定死，本场不再读全局设置——
+    /// 面试中途改设置不许让路由 prompt 与已定语言的 STT/history 撕裂。
+    let language: InterviewLanguage
+
+    init(language: InterviewLanguage = Settings.interviewLanguage) {
+        self.language = language
+    }
+
     /// The match criterion is ANSWERABILITY, not sameness: interviewers never phrase a
     /// question exactly like the script heading (「就活の軸を教えてください」 vs 稿の
     /// 「就職活動の軸」). "同じことを聞いている" made the small model reject nearly every
     /// paraphrase — the field reports of "answer isn't my script" trace back to it.
     /// Uncertainty still means null: a wrong verbatim answer read aloud is worse than a
     /// grounded live one.
-    static func systemPrompt(language: InterviewLanguage = Settings.interviewLanguage) -> String {
+    static func systemPrompt(language: InterviewLanguage = .japanese) -> String {
         switch language {
         case .japanese: systemPromptJa()
         case .chinese: systemPromptZh()
@@ -96,8 +104,12 @@ final class LLMRouter: Router {
     /// 100 字而非 60：经历一致性规则要求模型能看出「这条稿讲的是哪段经历」，
     /// 60 字常常还没露出经历的具体内容。
     static func candidateBlock(_ candidates: [BankEntry],
-                               language: InterviewLanguage = Settings.interviewLanguage) -> String {
-        let (qLabel, aLabel) = language == .chinese ? ("问题", "回答开头") : ("質問", "回答冒頭")
+                               language: InterviewLanguage = .japanese) -> String {
+        let (qLabel, aLabel): (String, String)
+        switch language {
+        case .japanese: (qLabel, aLabel) = ("質問", "回答冒頭")
+        case .chinese: (qLabel, aLabel) = ("问题", "回答开头")
+        }
         var cand = ""
         for (i, e) in candidates.enumerated() {
             let head = e.answer.count > 100 ? e.answer.prefix(100) + "…" : Substring(e.answer)
@@ -107,21 +119,24 @@ final class LLMRouter: Router {
     }
 
     func route(question: String, candidates: [BankEntry], history: String) async throws -> RouteDecision {
-        let language = Settings.interviewLanguage
         let cand = Self.candidateBlock(candidates, language: language)
+        let (historyLabel, questionLabel, candidatesLabel, noneLabel): (String, String, String, String)
+        switch language {
+        case .japanese: (historyLabel, questionLabel, candidatesLabel, noneLabel)
+            = ("直前のやり取り", "質問", "候補", "(なし)")
+        case .chinese: (historyLabel, questionLabel, candidatesLabel, noneLabel)
+            = ("上一轮对话", "问题", "候选", "(无)")
+        }
         var user = ""
         if !history.isEmpty {
-            user += language == .chinese ? "上一轮对话:\n\(history)\n\n" : "直前のやり取り:\n\(history)\n\n"
+            user += "\(historyLabel):\n\(history)\n\n"
         }
-        if language == .chinese {
-            user += "问题: \(question)\n\n候选:\n\(cand.isEmpty ? "(无)" : cand)"
-        } else {
-            user += "質問: \(question)\n\n候補:\n\(cand.isEmpty ? "(なし)" : cand)"
-        }
+        user += "\(questionLabel): \(question)\n\n\(candidatesLabel):\n\(cand.isEmpty ? noneLabel : cand)"
         let raw = try await FastLLM.complete(system: Self.systemPrompt(language: language),
                                              user: user, maxTokens: 80)
         let decision = parse(raw, candidates: candidates)
-        return Self.vetoingContextMismatch(decision, question: question, history: history)
+        return Self.vetoingContextMismatch(decision, question: question, history: history,
+                                           language: language)
     }
 
     // MARK: - 经历一致性护栏（确定性，不交给模型）
@@ -137,9 +152,11 @@ final class LLMRouter: Router {
     /// 误杀的代价是温和的（live 生成拿着真实 history + grounding 桥接，grounding 的
     /// 排序已混入上一问）；漏放的代价是把别的经历当刚才的读出来。不对称，偏向否决。
     static func vetoingContextMismatch(_ d: RouteDecision, question: String,
-                                       history: String) -> RouteDecision {
+                                       history: String,
+                                       language: InterviewLanguage = .japanese) -> RouteDecision {
         guard let answer = d.matchedAnswer, !history.isEmpty, isDeictic(question) else { return d }
-        let shared = contentWords(answer).intersection(contentWords(history))
+        let shared = contentWords(answer, language: language)
+            .intersection(contentWords(history, language: language))
         guard shared.count < 2 else { return d }
         NSLog("[router] deictic question, matched answer shares %d content word(s) with history — veto",
               shared.count)
@@ -153,13 +170,40 @@ final class LLMRouter: Router {
     static func isDeictic(_ question: String) -> Bool {
         let markers = ["それを", "それが", "それって", "その経験", "その学び", "その強み",
                        "その話", "先ほどの", "さっきの", "今の話",
-                       "刚才", "刚刚", "刚提到", "你说的那", "那段经历", "那个经历", "这段经历"]
+                       "刚才", "刚刚", "刚提到", "你说的那", "你提到的",
+                       "那段经历", "那个经历", "这段经历", "这个经历", "这些经历"]
         return markers.contains(where: question.contains)
     }
 
     /// 内容词：连续 2 字以上的汉字串（現場/効率/分析…）、片假名串（データ/チーム…）、
     /// 拉丁串（MBA/AI…）。平假名基本是语法成分，全部丢弃——它们的重叠没有内容含义。
-    static func contentWords(_ text: String) -> Set<String> {
+    ///
+    /// 中文没有假名作天然分词符，汉字连续串只在标点处断开——整句长块之间几乎不可能
+    /// 逐字相等，按日语的「整串比对」算重叠恒为 0，否决就从「偶发误杀」变成无条件击杀。
+    /// 所以中文把汉字串再切成字符 bigram（实习/数据/分析…）后参与重叠比对。
+    static func contentWords(_ text: String,
+                             language: InterviewLanguage = .japanese) -> Set<String> {
+        let runs = contentRuns(text)
+        switch language {
+        case .japanese:
+            return runs
+        case .chinese:
+            var words = Set<String>()
+            for run in runs {
+                // 拉丁/数字串保持整词（mba/ai）；汉字串切 bigram。单个 bigram 的串原样保留。
+                if run.unicodeScalars.contains(where: { $0.value < 0x3000 }) {
+                    words.insert(run)
+                    continue
+                }
+                let chars = Array(run)
+                if chars.count <= 2 { words.insert(run); continue }
+                for i in 0..<(chars.count - 1) { words.insert(String(chars[i...(i + 1)])) }
+            }
+            return words
+        }
+    }
+
+    private static func contentRuns(_ text: String) -> Set<String> {
         enum Kind { case kanji, katakana, latin, other }
         func kind(_ s: UnicodeScalar) -> Kind {
             switch s.value {
