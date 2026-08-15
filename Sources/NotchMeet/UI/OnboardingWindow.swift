@@ -31,6 +31,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     /// Whether a live interview recording is running right now — the demo then goes visual
     /// only (no TTS through the speakers) and the step shows a 🔇 note.
     var isLiveCapture: (() -> Bool)?
+    /// 目标步：把公司/岗位落成第一个面试目标（按公司名 upsert，重复调用幂等）。
+    var onSaveTarget: ((_ company: String, _ role: String) -> Void)?
+    /// 导入步读到的是简历（非原稿）：交给工作台在引导结束后走完整解析确认流。
+    var onImportResume: ((URL) -> Void)?
     /// Onboarding finished (or window closed): (permissionGranted, recognizedCount).
     var onFinish: ((Bool, Int) -> Void)?
 
@@ -49,6 +53,8 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             saveKey: { [weak self] name, value in self?.onSaveKey?(name, value) },
             playDemo: { [weak self] answer, intent, spokenJa in self?.onPlayDemo?(answer, intent, spokenJa) },
             isLiveCapture: { [weak self] in self?.isLiveCapture?() ?? false },
+            saveTarget: { [weak self] company, role in self?.onSaveTarget?(company, role) },
+            importResume: { [weak self] url in self?.onImportResume?(url) },
             finish: { [weak self] granted, count in
                 // Bind `self` strongly for the whole closure: `onFinish` drops AppController's
                 // only strong ref to this controller (`onboarding = nil`), which would otherwise
@@ -83,6 +89,15 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+        #if DEBUG
+        // 视觉 QA：与设置窗同款的按 ID 截图钩子（窗口被屏幕共享排除，只能按窗口号截）。
+        if SettingsWindowController.visualQA {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                try? "\(w.windowNumber)".write(toFile: "/tmp/nm-onboarding-window.txt",
+                                               atomically: true, encoding: .utf8)
+            }
+        }
+        #endif
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -37,6 +37,10 @@ struct OnboardingView: View {
     /// 正在进行真实的面试录音（引导可从设置中途重开）。此时 demo 只显示、不出声——
     /// 扬声器一响就会被自己的麦克风采进 Zoom/Meet；界面上给出 🔇 说明，免得被当成故障。
     let isLiveCapture: () -> Bool
+    /// 目标步：公司/岗位 upsert 成第一个面试目标（可跳过；空公司名 = 不落）。
+    let saveTarget: (_ company: String, _ role: String) -> Void
+    /// 导入步识别为简历时：引导结束后交给工作台走完整的解析确认流。
+    let importResume: (URL) -> Void
     let finish: (Bool, Int) -> Void
 
     @ObservedObject private var languageStore = AppLanguageStore.shared
@@ -44,6 +48,12 @@ struct OnboardingView: View {
     @State private var scriptText = ""
     /// 导入失败的原因（编码识别不出 / 打不开）。非 nil 时在导入区下方显示。
     @State private var importError: String?
+    /// 目标步收集的三个字段（全部可跳过；每个字段的用途在控件下方当场写明）。
+    @State private var targetCompany = ""
+    @State private var targetRole = ""
+    @State private var interviewLang = Settings.interviewLanguage
+    /// 导入步读到的简历文件（PDF，或命中简历专属标题的文本）。与原稿并存。
+    @State private var resumeURL: URL?
     @State private var permAttempted = false
     @State private var permGranted = false
     @State private var setupCode = ""           // pasted activation code (nmk1.…); empty = leave as-is
@@ -54,7 +64,7 @@ struct OnboardingView: View {
     @State private var demoResetWork: DispatchWorkItem?
     @Namespace private var langNS
 
-    private let total = 7
+    private let total = 8
     private var lang: UILanguage { languageStore.language }
     private var t: OBStrings { .of(languageStore.language) }
     private var recognized: [BankEntry] { ScriptParser.parse(scriptText) }
@@ -135,7 +145,7 @@ struct OnboardingView: View {
             llmSet = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"]
                 .contains(where: keyPresent)
             #if DEBUG
-            // 视觉 QA：FI_OB_STEP=<0…6> 直接落到某一步截图，不必逐步点击。
+            // 视觉 QA：FI_OB_STEP=<0…7> 直接落到某一步截图，不必逐步点击。
             if let raw = ProcessInfo.processInfo.environment["FI_OB_STEP"], let n = Int(raw) {
                 step = max(0, min(total - 1, n))
             }
@@ -147,10 +157,11 @@ struct OnboardingView: View {
         switch step {
         case 0: welcomeStep
         case 1: howStep
-        case 2: importStep
-        case 3: permissionStep
-        case 4: hasBundledService ? AnyView(giftStep) : AnyView(keysStep)
-        case 5: demoStep
+        case 2: targetStep
+        case 3: importStep
+        case 4: permissionStep
+        case 5: hasBundledService ? AnyView(giftStep) : AnyView(keysStep)
+        case 6: demoStep
         default: doneStep
         }
     }
@@ -278,7 +289,101 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: step 1 — import script
+    // MARK: step 2 — your target（面试语言 + 公司 + 岗位；透明即尊重）
+
+    private var targetStep: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            OBKicker(text: t.kTarget)
+            Text(t.hTarget).font(.system(size: 21, weight: .semibold)).foregroundStyle(.white).padding(.top, 12)
+            Text(t.pTarget).font(.system(size: 12.5)).lineSpacing(3)
+                .foregroundStyle(OB.ink.opacity(0.54)).padding(.top, 8)
+
+            // 面试语言：即时写入设置（setter 自己广播，同设置页的行为）。
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Text(t.lblInterviewLanguage)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    HStack(spacing: 2) {
+                        interviewLangButton(.chinese)
+                        interviewLangButton(.japanese)
+                    }
+                    .padding(2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.black.opacity(0.30))
+                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+                    )
+                }
+                Text(t.capInterviewLanguage).font(.system(size: 10.5)).foregroundStyle(OB.ink.opacity(0.40))
+            }
+            .padding(13)
+            .obSurface(cornerRadius: 14, fill: 0.18)
+            .padding(.top, 16)
+
+            targetField($targetCompany, placeholder: t.phCompany, caption: t.capCompany)
+                .padding(.top, 10)
+            targetField($targetRole, placeholder: t.phRole, caption: t.capRole)
+                .padding(.top, 10)
+
+            Spacer(minLength: 12)
+            navBar {
+                OBTextButton(t.btnSkip) { next() }
+                OBPrimaryButton(t.btnNext) { commitTarget(); next() }
+            }
+        }
+    }
+
+    private func interviewLangButton(_ l: InterviewLanguage) -> some View {
+        let on = interviewLang == l
+        return Button {
+            withAnimation(OB.springSnappy) {
+                interviewLang = l
+                Settings.interviewLanguage = l
+            }
+        } label: {
+            Text(AppStrings(language: lang).interviewLanguageName(l))
+                .font(.system(size: 11.5, weight: on ? .semibold : .medium))
+                .frame(width: 52, height: 22)
+                .foregroundStyle(on ? OB.inkDeep : OB.ink.opacity(0.55))
+                .background {
+                    if on {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(LinearGradient(colors: [OB.accentHi, OB.accent],
+                                                 startPoint: .top, endPoint: .bottom))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func targetField(_ text: Binding<String>, placeholder: String, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(OB.ink.opacity(0.92))
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.30))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75))
+                )
+            // 用途当场写明：透明即尊重（与「按钮按下前写明真实引擎与代价」同一条纪律）。
+            Text(caption).font(.system(size: 10.5)).foregroundStyle(OB.ink.opacity(0.40))
+        }
+        .padding(13)
+        .obSurface(cornerRadius: 14, fill: 0.18)
+    }
+
+    /// upsert 语义在控制器侧（按公司名合并），这里重复调用无害。
+    private func commitTarget() {
+        let company = targetCompany.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !company.isEmpty else { return }
+        saveTarget(company, targetRole.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // MARK: step 3 — load ammo（原稿或简历，同一入口）
 
     private var importStep: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -292,13 +397,25 @@ struct OnboardingView: View {
             HStack {
                 Text(t.lblScript).font(.system(size: 11)).tracking(0.8).foregroundStyle(OB.ink.opacity(0.4))
                 Spacer()
-                OBTextButton(t.btnPickMd, systemImage: "arrow.up.doc", tint: OB.accent) { pickFile() }
+                OBTextButton(t.btnPickAmmo, systemImage: "arrow.up.doc", tint: OB.accent) { pickFile() }
                 OBTextButton(t.btnSample, systemImage: "plus") { withAnimation(OB.spring) { scriptText = OnboardingView.sampleScript } }
             }
             .padding(.top, 16).padding(.bottom, 7)
 
             ScriptEditor(text: $scriptText, placeholder: t.phScript, dropHint: t.dropHint)
                 .frame(height: 82)
+
+            // 读到的是简历（非原稿）：说明去向，解析确认发生在工作台，不在引导里假装完成。
+            if let resumeURL {
+                HStack(spacing: 7) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 12)).foregroundStyle(OB.accent)
+                    Text(String(format: t.resumeRecogFormat, resumeURL.lastPathComponent))
+                        .font(.system(size: 11)).lineSpacing(2)
+                        .foregroundStyle(OB.ink.opacity(0.75))
+                        .fixedSize(horizontal: false, vertical: true)
+                }.padding(.top, 10)
+            }
 
             // 文件读不进来时必须说明原因——旧实现是静默 no-op，用户完全无从判断。
             if let importError {
@@ -559,6 +676,18 @@ struct OnboardingView: View {
 
             let creditBalance = CreditManager.shared.balanceSeconds
             VStack(spacing: 0) {
+                // 目标行：填了公司才显示（跳过的东西不该出现在总结里占位）。
+                if !targetCompany.trimmingCharacters(in: .whitespaces).isEmpty {
+                    summaryRow(t.sumTargetLabel,
+                               targetRole.trimmingCharacters(in: .whitespaces).isEmpty
+                                   ? targetCompany : "\(targetCompany) · \(targetRole)",
+                               on: true)
+                    summaryDivider
+                }
+                if let resumeURL {
+                    summaryRow(t.sumResumeLabel, resumeURL.lastPathComponent, on: true)
+                    summaryDivider
+                }
                 summaryRow(t.sumScriptLabel, recognized.isEmpty ? t.skipped : "\(recognized.count) \(t.unitCount)", on: !recognized.isEmpty)
                 summaryDivider
                 summaryRow(t.sumPermLabel, permGranted ? t.permSet : t.permUnset, on: permGranted)
@@ -574,7 +703,9 @@ struct OnboardingView: View {
                     summaryRow(t.sumCreditLabel, AppStrings(language: lang).creditMinutes(creditBalance), on: creditBalance > 0)
                     summaryDivider
                 }
-                summaryRow(t.sumLanguageLabel, t.sumLanguageValue, on: true)
+                // 语言行读真实设置（此前是硬编码「面试与回答：日语」——目标步选了中文
+                // 面试的用户会在完成页看到一句假话）。
+                summaryRow(t.sumLanguageLabel, AppStrings(language: lang).languageSummaryValue, on: true)
             }
             .obSurface(cornerRadius: 12, fill: 0.18)
             .padding(.top, 14).frame(maxWidth: 360)
@@ -585,14 +716,14 @@ struct OnboardingView: View {
             }
 
             if ready {
-                OBStartButton(t.btnStart) { commitScript(); commitKeys(); finish(permGranted, recognized.count) }
+                OBStartButton(t.btnStart) { commitAllAndFinish() }
                     .padding(.top, 14)
                 Text(t.doneFoot).font(.system(size: 11)).foregroundStyle(OB.ink.opacity(0.32)).padding(.top, 10)
             } else {
                 // Honest terminal: send the user back to the first unmet requirement. Finishing
                 // is still allowed (the notch + menu surface the same gap), just not disguised.
                 OBPrimaryButton(t.btnFix, minWidth: 150) { goToFirstUnmet() }.padding(.top, 14)
-                OBTextButton(t.btnEnterAnyway) { commitScript(); commitKeys(); finish(permGranted, recognized.count) }
+                OBTextButton(t.btnEnterAnyway) { commitAllAndFinish() }
                     .padding(.top, 6)
             }
             Spacer(minLength: 0)
@@ -637,16 +768,23 @@ struct OnboardingView: View {
         let panel = NSOpenPanel()
         // 引导可在面试中途重开；选稿的 Finder 列表（原稿文件名）不能进共享帧。
         ScreenShareGuard.exclude(panel)
-        var types: [UTType] = [.plainText, .text]
-        if let md = UTType(filenameExtension: "md") { types.append(md) }
-        if let markdown = UTType(filenameExtension: "markdown") { types.append(markdown) }
-        panel.allowedContentTypes = types
+        panel.allowedContentTypes = ResumeReaders.openPanelTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        // PDF 一律按简历走（原稿约定是 md/txt）；文本文件命中 ≥2 个简历专属标题也按
+        // 简历走。简历不进原稿编辑器——解析与逐条确认发生在工作台，引导只做登记。
+        if url.pathExtension.lowercased() == "pdf" {
+            withAnimation(OB.spring) { resumeURL = url; importError = nil }
+            return
+        }
         do {
             let s = try TextFileReader.read(url)
-            withAnimation(OB.spring) { scriptText = s; importError = nil }
+            if ResumeExtractor.resumeSignalCount(s) >= 2 {
+                withAnimation(OB.spring) { resumeURL = url; importError = nil }
+            } else {
+                withAnimation(OB.spring) { scriptText = s; importError = nil }
+            }
         } catch {
             withAnimation(OB.spring) { importError = error.localizedDescription }
         }
@@ -680,6 +818,16 @@ struct OnboardingView: View {
         if !recognized.isEmpty { _ = saveScript(scriptText) }
     }
 
+    /// 完成页的统一提交：稿件 + 密钥 + 目标 + 简历移交，最后 finish。
+    /// （目标是 upsert、简历移交在控制器侧只登记一次——重复到达完成页无害。）
+    private func commitAllAndFinish() {
+        commitScript()
+        commitKeys()
+        commitTarget()
+        if let resumeURL { importResume(resumeURL) }
+        finish(permGranted, recognized.count)
+    }
+
     /// Persist any newly typed keys to the Keychain. Only writes non-empty values, so passing
     /// through the step without typing never clears an existing key. Idempotent: called on the
     /// key step's Next and again on finish. Going live happens once, in the controller's finish.
@@ -707,7 +855,7 @@ struct OnboardingView: View {
 
     /// From the「还差一步」done state, jump to the first requirement that isn't met.
     private func goToFirstUnmet() {
-        withAnimation(OB.spring) { step = permGranted ? 4 : 3 }   // 激活/见面礼步，否则权限步
+        withAnimation(OB.spring) { step = permGranted ? 5 : 4 }   // 激活/见面礼步，否则权限步
     }
 
     static let sampleScript = """

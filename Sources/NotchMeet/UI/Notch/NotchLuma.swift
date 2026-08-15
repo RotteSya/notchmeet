@@ -218,6 +218,14 @@ final class NotchLumaView: NSView {
         updateRunning()
     }
 
+    /// 工作台收入刘海的「吸气」：与 pulse() 同族但更深更长——直接抬 shown（target 不动），
+    /// step() 的指数回落给出 ~1s 的呼吸尾巴；flow 叠一层内容涌入的脉冲感。
+    func inhale() {
+        energyShown = min(1.0, energyShown + 0.30)
+        flow = min(1.4, flow + 0.9)
+        updateRunning()
+    }
+
     // MARK: Run/pause — the field costs zero when there is nothing to show
 
     private var needsMotion: Bool {
