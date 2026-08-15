@@ -23,6 +23,8 @@ final class ControlPanel: NSObject {
         var activeScript: String?
         /// 库里有稿但一份都没选 —— 静默地整场不命中，必须标出来。
         var hasScriptsButNoneActive = false
+        /// 本场武装的面试目标（公司 · 岗位）。nil = 未指定目标。
+        var activeTarget: String?
         /// 剩余额度秒数；nil = 本机全 BYO/本地（额度概念不适用，菜单不显示）。
         var creditSeconds: Int?
         static let empty = Health()
@@ -38,6 +40,7 @@ final class ControlPanel: NSObject {
     /// 真正的实现只绑在热键（⌘⇧H）上。
     var onToggleVisibility: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onOpenWorkbench: (() -> Void)?
     var onOpenWallet: (() -> Void)?
     var onManageScripts: (() -> Void)?
     /// Pick the script used for this interview (nil = none). Applied to the shared store.
@@ -49,6 +52,10 @@ final class ControlPanel: NSObject {
     var recordingProvider: (() -> Bool)?
     /// All imported scripts + which one is active — read on each rebuild for the picker.
     var scriptsProvider: (() -> (scripts: [InterviewScript], activeID: String?))?
+    /// 面试目标（一司一策）：选目标 = 武装它（同时兑现其绑定用稿）。
+    var targetsProvider: (() -> (targets: [InterviewTarget], activeID: String?))?
+    var onSelectTarget: ((String?) -> Void)?
+    var onManageTargets: (() -> Void)?
 
     func install() {
         menu.delegate = self
@@ -93,6 +100,10 @@ final class ControlPanel: NSObject {
                 addInfo(menu, "      \(t.llmChinaBlockedWarning)")
             }
             addInfo(menu, "   \(t.screenShareGuard)  \(h.screenShareGuard ? "✓" : "⚠️")")
+            // 本场目标：一司一策的武装对象，画像 identity 与热词第一位都跟它走。
+            if let target = h.activeTarget {
+                addInfo(menu, "   \(t.thisInterviewTarget)  ✓ \(target)")
+            }
             // 本场用稿：拿 A 公司的稿进 B 公司面试是最致命的静默失败，
             // 而此前一级菜单里根本看不到当前用的是哪一份（只藏在二级子菜单）。
             if let script = h.activeScript {
@@ -123,17 +134,47 @@ final class ControlPanel: NSObject {
             }
         }
 
+        // Target picker（一司一策）：有目标时排在用稿选择器上面——选目标会连稿一起换。
+        if let targetData = targetsProvider?(), !targetData.targets.isEmpty {
+            let targetItem = NSMenuItem(title: t.thisInterviewTarget, action: nil, keyEquivalent: "")
+            targetItem.submenu = buildTargetMenu(t, data: targetData)
+            menu.addItem(targetItem)
+        }
         // Active-script picker for THIS interview (management lives in the settings window).
         let scriptItem = NSMenuItem(title: t.thisInterviewScript, action: nil, keyEquivalent: "")
         scriptItem.submenu = buildScriptMenu(t)
         menu.addItem(scriptItem)
         menu.addItem(.separator())
 
+        add(menu, t.openWorkbench, #selector(openWorkbenchTapped))
         add(menu, t.openSettings, #selector(openSettingsTapped))
         add(menu, t.creditMenuTopUp, #selector(openWalletTapped))
         add(menu, t.toggleVisibility, #selector(toggleVisibilityTapped))
         menu.addItem(.separator())
         add(menu, t.quit, #selector(quit))
+    }
+
+    private func buildTargetMenu(_ t: AppStrings,
+                                 data: (targets: [InterviewTarget], activeID: String?)) -> NSMenu {
+        let sub = NSMenu()
+        // 子菜单是悬停时才创建的另一个窗口——这一屏全是公司名，同门保护。
+        ScreenShareGuard.protect(sub)
+        for target in data.targets {
+            let on = target.id == data.activeID
+            let item = NSMenuItem(title: "\(on ? "✓ " : "")\(target.displayLabel)",
+                                  action: #selector(targetTapped(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = target.id
+            sub.addItem(item)
+        }
+        sub.addItem(.separator())
+        let none = NSMenuItem(title: "\(data.activeID == nil ? "✓ " : "")\(t.targetNone)",
+                              action: #selector(targetNoneTapped), keyEquivalent: "")
+        none.target = self
+        sub.addItem(none)
+        sub.addItem(.separator())
+        add(sub, t.manageTargets, #selector(manageTargetsTapped))
+        return sub
     }
 
     private func buildScriptMenu(_ t: AppStrings) -> NSMenu {
@@ -176,6 +217,7 @@ final class ControlPanel: NSObject {
     @objc private func reviewPreviousTapped() { onReviewPrevious?() }
     @objc private func reviewReturnLiveTapped() { onReviewReturnLive?() }
     @objc private func openSettingsTapped() { onOpenSettings?() }
+    @objc private func openWorkbenchTapped() { onOpenWorkbench?() }
     @objc private func openWalletTapped() { onOpenWallet?() }
     @objc private func manageScriptsTapped() { onManageScripts?() }
     @objc private func scriptTapped(_ sender: NSMenuItem) {
@@ -183,6 +225,12 @@ final class ControlPanel: NSObject {
         onSelectScript?(id)
     }
     @objc private func scriptNoneTapped() { onSelectScript?(nil) }
+    @objc private func targetTapped(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        onSelectTarget?(id)
+    }
+    @objc private func targetNoneTapped() { onSelectTarget?(nil) }
+    @objc private func manageTargetsTapped() { onManageTargets?() }
     @objc private func toggleVisibilityTapped() { onToggleVisibility?() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

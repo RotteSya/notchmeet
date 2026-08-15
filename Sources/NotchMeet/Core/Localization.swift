@@ -385,6 +385,14 @@ struct AppStrings {
         pick("无法识别文件的文字编码。请用文本编辑器另存为 UTF-8 后重试，或直接复制粘贴正文。",
              "文字エンコーディングを判別できませんでした。UTF-8 で保存し直すか、本文を直接貼り付けてください。")
     }
+    var importPDFEncrypted: String {
+        pick("这份 PDF 设了密码。请先在「预览」中打开并解除密码，另存后重试。",
+             "この PDF はパスワード保護されています。「プレビュー」で開いてパスワードを解除し、保存し直してから再試行してください。")
+    }
+    var importPDFNoText: String {
+        pick("这份 PDF 没有可提取的文字，文字识别（OCR）也没能读出内容。请尝试导出为文本，或直接复制粘贴正文。",
+             "この PDF から抽出できるテキストがなく、文字認識（OCR）でも読み取れませんでした。テキストとして書き出すか、本文を直接貼り付けてください。")
+    }
     /// 稿件没能落盘。这是本 app 最坏的失败：绝不能静默，也绝不能显示成功。
     var scriptSaveFailedTitle: String {
         pick("原稿没能保存", "原稿を保存できませんでした")
@@ -500,6 +508,7 @@ struct AppStrings {
     // MARK: Settings window
 
     var openSettings: String { pick("打开设置…", "設定を開く…") }
+    var openWorkbench: String { pick("打开备战工作台…", "準備ワークベンチを開く…") }
     var secGeneral: String { pick("通用", "一般") }
     var secScripts: String { pick("面试原稿", "面接原稿") }
     var secKeys: String { pick("自备密钥", "自分のキー") }
@@ -558,6 +567,9 @@ struct AppStrings {
     var thisInterviewScript: String { pick("本次面试原稿", "今回の面接原稿") }
     var scriptNone: String { pick("不使用原稿", "原稿を使用しない") }
     var manageScripts: String { pick("管理原稿…", "原稿を管理…") }
+    var thisInterviewTarget: String { pick("本次面试目标", "今回の面接ターゲット") }
+    var targetNone: String { pick("不指定目标", "ターゲットなし") }
+    var manageTargets: String { pick("在工作台管理…", "ワークベンチで管理…") }
     var activeBadge: String { pick("启用中", "使用中") }
     var setActiveScript: String { pick("设为本次使用", "今回使用する") }
     var renameScript: String { pick("重命名", "名称変更") }

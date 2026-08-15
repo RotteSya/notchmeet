@@ -11,6 +11,7 @@ final class AppController {
     private let facts = FactStore()
     private let bank = AnswerBank()
     private let scriptStore = ScriptStore()
+    private let targetStore = TargetStore()
     private let portrait = PortraitIndex()
     private let control = ControlPanel()
     private let inactivity = InactivityMonitor()
@@ -19,7 +20,10 @@ final class AppController {
     /// 面试复盘记录（仅本机、可关、进「删除本地数据」）。
     private let sessions = SessionStore()
     private var settingsWindow: SettingsWindowController?
+    private var workbench: WorkbenchWindowController?
     private var onboarding: OnboardingWindowController?
+    /// 引导导入步读到的简历：引导结束后移交工作台走完整解析确认流。
+    private var pendingOnboardingResume: URL?
     private let demoVoice = DemoVoice()
     private var demoUnpauseWork: DispatchWorkItem?
     private var captureStarted = false   // tap.start() succeeded & running (self-check)
@@ -66,6 +70,16 @@ final class AppController {
         installControls()
         observeLanguageChanges()
         observePortraitSources()
+        // 目标维度的首启播种：从存量稿件公司与志望公司生成目标。只在 targets.json
+        // 尚不存在时发生；产出为零不落盘，下次启动无害重试。
+        targetStore.seedIfNeeded(scripts: scriptStore.all,
+                                 activeScriptID: scriptStore.activeID,
+                                 motivations: facts.sheet.motivations)
+        // 上次武装的目标持久有效：启动即整条兑现（答案库 + 绑定用稿 + 画像 + 热词）。
+        // 只 activate 答案库不够——目标绑的稿与 scriptStore.activeID 可能早已分叉
+        // （旧版本、或任何只改一半的路径留下的状态），那会让「本场用稿」显示 A 家、
+        // 实际读 B 家的稿。启动对齐是这个不一致的兜底自愈点。
+        applyTarget(targetStore.activeID)
         if ProcessInfo.processInfo.environment["FI_PREP"] == "1" { runPrep() }
         reloadPipeline()
         // Dev-only visual-QA hook: open settings straight to a section so the redesign can be
@@ -79,6 +93,21 @@ final class AppController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.openSettings(section: SettingsSection(rawValue: raw))
             }
+        } else if ProcessInfo.processInfo.environment["FI_OPEN_WORKBENCH"] == "1"
+                    || args.contains("--open-workbench") {
+            // 视觉 QA：直接打开备战工作台。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.openWorkbench()
+            }
+            #if DEBUG
+            // 视觉 QA：FI_QA_FLYIN=1 自动触发「准备面试」（配 FI_SLOW_FLYIN=1 逐帧检查）。
+            if ProcessInfo.processInfo.environment["FI_QA_FLYIN"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                    guard let self, let target = self.targetStore.active else { return }
+                    self.prepareForInterview(target)
+                }
+            }
+            #endif
         } else if ProcessInfo.processInfo.environment["FI_OPEN_ONBOARDING"] == "1" {
             // 视觉 QA：不改动真实的 nm_onboarded 状态，直接打开引导流程。
             openOnboarding()
@@ -137,7 +166,8 @@ final class AppController {
 
     private func rebuildPortrait() {
         let lang = recording ? armedInterviewLanguage : Settings.interviewLanguage
-        portrait.rebuild(sheet: facts.sheet, script: scriptStore.active, language: lang)
+        portrait.rebuild(sheet: facts.sheet, script: scriptStore.active,
+                         target: targetStore.active, language: lang)
     }
 
     private func installControls() {
@@ -150,7 +180,11 @@ final class AppController {
         control.recordingProvider = { [weak self] in self?.recording ?? false }
         control.scriptsProvider = { [weak self] in (self?.scriptStore.all ?? [], self?.scriptStore.activeID) }
         control.onSelectScript = { [weak self] id in self?.scriptStore.setActive(id) }
+        control.targetsProvider = { [weak self] in (self?.targetStore.all ?? [], self?.targetStore.activeID) }
+        control.onSelectTarget = { [weak self] id in self?.applyTarget(id) }
+        control.onManageTargets = { [weak self] in self?.openWorkbench() }
         control.onOpenSettings = { [weak self] in self?.openSettings() }
+        control.onOpenWorkbench = { [weak self] in self?.openWorkbench() }
         control.onOpenWallet = { [weak self] in self?.openSettings(section: .wallet) }
         control.onManageScripts = { [weak self] in self?.openSettings(section: .scripts) }
         control.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
@@ -265,8 +299,9 @@ final class AppController {
         // pay TLS/H2 cold-start (§14.4). Sends no user data — a 1-token ping.
         prewarmLLM()
         // 热词取开录一刻的最新值：最常见的「填完简历事实/换稿 → 直接开始录音」流程
-        // 不经过 reloadPipeline，arm 时下发的那份是旧快照。
+        // 不经过 reloadPipeline，arm 时下发的那份是旧快照。答案库同理对齐当前目标。
         stt.setVocabulary(sttContextualVocabulary())
+        bank.activate(targetID: targetStore.activeID)
         rebuildPortrait()
         do {
             // Open the audio tap FIRST so that "no call app to capture" throws before the STT
@@ -277,7 +312,9 @@ final class AppController {
             // 回答这一家，正是这个 app 最不能犯的错）。
             answerHistory.reset()
             sttHealth.reset()   // 上一场的慢终稿计数不跨场
-            sessions.begin(scriptName: scriptStore.active?.displayLabel)
+            sessions.begin(scriptName: scriptStore.active?.displayLabel,
+                           targetID: targetStore.activeID,
+                           targetCompany: targetStore.active?.company)
             setRecording(true)
             credit.beginSession(metered: metered)
             startConnectionKeepWarm()
@@ -466,6 +503,7 @@ final class AppController {
                      screenShareGuard: ScreenShareGuard.auditPasses(),
             activeScript: scriptStore.active?.displayLabel,
             hasScriptsButNoneActive: scriptStore.activeID == nil && !scriptStore.all.isEmpty,
+                     activeTarget: targetStore.active?.displayLabel,
                      // 只对「会被计量」的配置显示额度——全 BYO 的用户没有额度概念。
                      creditSeconds: CreditPolicy.sessionIsMetered() ? credit.balanceSeconds : nil)
     }
@@ -563,6 +601,67 @@ final class AppController {
         settingsWindow?.show(section: section)
     }
 
+    /// Open the workbench (备战驾驶舱). Lazily created and reused; shares the same live
+    /// stores as settings & pipeline, so ammo edits/target picks take effect on the next
+    /// turn with no restart.
+    private func openWorkbench() {
+        if workbench == nil {
+            let wb = WorkbenchWindowController(targets: targetStore, scripts: scriptStore,
+                                               facts: facts)
+            wb.onOpenSettings = { [weak self] section in self?.openSettings(section: section) }
+            wb.onBuildBank = { [weak self] in self?.runPrep() }
+            wb.onPipelineChanged = { [weak self] in
+                self?.facts.reload()
+                self?.rebuildPortrait()
+            }
+            wb.healthProvider = { [weak self] in self?.currentHealth() ?? .empty }
+            wb.bankCountProvider = { [weak self] in self?.bank.entries.count ?? 0 }
+            wb.onPrepare = { [weak self] target in self?.prepareForInterview(target) }
+            wb.onArmTarget = { [weak self] id in self?.applyTarget(id) }
+            workbench = wb
+        }
+        workbench?.show()
+    }
+
+    /// 武装一个目标：设为活跃 → 兑现其绑定用稿 → 切它的答案库 → 画像/热词跟上。
+    /// 菜单选目标与「准备面试」共用这一条路径（真相源只有一处）。
+    private func applyTarget(_ id: String?) {
+        targetStore.setActive(id)
+        if let target = targetStore.active {
+            // 一司一稿：目标绑了稿就切过去；没绑就保持现状（不静默换稿）。
+            if let scriptID = target.scriptID,
+               scriptStore.all.contains(where: { $0.id == scriptID }) {
+                scriptStore.setActive(scriptID)
+            }
+        }
+        bank.activate(targetID: targetStore.activeID)
+        rebuildPortrait()
+        stt?.setVocabulary(sttContextualVocabulary())
+    }
+
+    /// armed 阶段（点「准备面试」）：武装目标 → 预热连接 → Genie 吸入刘海待命。
+    /// **不开录音、不计费**——仪式感与计费诚实解耦；录音仍由既有三入口
+    /// （⌘⇧P / 刘海按钮 / 菜单）在面试真正开始时开启。
+    private func prepareForInterview(_ target: InterviewTarget) {
+        applyTarget(target.id)
+        prewarmLLM()
+        notch.show()   // 落点必须在场，飞行 Panel 才能压到它下面
+        let flew: Bool = {
+            guard let win = workbench?.windowForFlight,
+                  let sheet = workbench?.flightSheetModel() else { return false }
+            return GenieFlight.fly(from: win,
+                                   sheet: sheet,
+                                   to: notch.collapsedFrame,
+                                   belowWindowNumber: notch.panelWindowNumber,
+                                   onMouthReached: { [weak self] in self?.notch.inhaleArmed() },
+                                   completion: { [weak self] in self?.notch.pulseArmed() })
+        }()
+        // 快照已接管（或走降级直切）：真窗此刻退场。降级 = Reduce Motion / 无 Metal /
+        // 快照失败——直接收窗 + 光场脉冲，仪式绝不挡住 armed 本体。
+        workbench?.hideForFlight()
+        if !flew { notch.pulseArmed() }
+    }
+
     /// First-launch (or menu-reopened) onboarding. Step 1 reuses the live `scriptStore`,
     /// step 2 fires the real macOS audio-capture TCC prompt, step 3 drives the real notch.
     private func openOnboarding() {
@@ -593,6 +692,21 @@ final class AppController {
                 if v.isEmpty { Secrets.delete(name) } else { Secrets.set(name, v) }
             }
             ob.onPlayDemo = { [weak self] answer, intent, spokenJa in self?.runOnboardingDemo(answer: answer, intent: intent, spokenJa: spokenJa) }
+            // 目标步：按公司名 upsert（引导可重开、完成页可重复到达——不许因此长出重复目标）。
+            ob.onSaveTarget = { [weak self] company, role in
+                guard let self else { return }
+                let cleanRole = role.isEmpty ? nil : role
+                if let existing = self.targetStore.all.first(where: {
+                    $0.company.compare(company, options: .caseInsensitive) == .orderedSame
+                }) {
+                    self.targetStore.update(id: existing.id, role: .some(cleanRole))
+                    self.targetStore.setActive(existing.id)
+                } else if let id = self.targetStore.add(company: company, role: cleanRole) {
+                    self.targetStore.setActive(id)
+                }
+                self.rebuildPortrait()
+            }
+            ob.onImportResume = { [weak self] url in self?.pendingOnboardingResume = url }
             #if DEBUG
             // 视觉 QA：FI_QA_DEMO_LIVE=1 让引导 demo 步按「面试录音进行中」渲染（🔇 提示）。
             let qaDemoLive = ProcessInfo.processInfo.environment["FI_QA_DEMO_LIVE"] == "1"
@@ -605,6 +719,12 @@ final class AppController {
                 Settings.onboarded = true
                 self.onboarding = nil
                 self.reloadPipeline()            // resync notch after the demo
+                // 引导的终点不是空气，是驾驶舱：落到工作台；带简历的接着走解析确认流。
+                self.openWorkbench()
+                if let url = self.pendingOnboardingResume {
+                    self.pendingOnboardingResume = nil
+                    self.workbench?.importResume(url)
+                }
             }
             onboarding = ob
         }
@@ -851,7 +971,12 @@ final class AppController {
             guard t.count >= 2, t.count <= 20, seen.insert(t).inserted else { return }
             out.append(t)
         }
-        // 面试目标公司名排最前——热词表被 prefix(50) 截断时，最不能丢的就是它。
+        // 武装目标（一司一策）排最前——热词表被 prefix(50) 截断时，最不能丢的就是它。
+        // JD 刻意不自动抽词（决策⑤只留字段）：长文分词的杂草会反噬识别，
+        // 目标级热词走 emphasis.keywords（用户手挑的才配进这张小而准的表）。
+        add(targetStore.active?.company)
+        add(targetStore.active?.role)
+        targetStore.active?.emphasis?.keywords?.forEach { add($0) }
         add(scriptStore.active?.company)
         for m in facts.sheet.motivations { add(m.targetCompany) }
         for e in facts.sheet.experiences { add(e.org); add(e.role) }

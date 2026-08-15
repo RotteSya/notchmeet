@@ -59,6 +59,24 @@ final class NotchController {
     private var visible = true
     func show() { panel.orderFrontRegardless() }
 
+    /// 「准备面试」armed 完成的视觉确认（工作台收入刘海时的光场反应）。
+    func pulseArmed() {
+        panel.orderFrontRegardless()
+        (panel.contentView as? NotchView)?.pulseArmed()
+    }
+
+    /// 飞入仪式的「吸气」（内容正在涌入的持续感；到达时再补一次 pulse 收尾）。
+    func inhaleArmed() {
+        panel.orderFrontRegardless()
+        (panel.contentView as? NotchView)?.inhaleArmed()
+    }
+
+    /// 飞入仪式的落点：折叠态刘海（或无刘海屏的黑石板）的全局坐标。
+    /// 几何层已统一两种屏，仪式不需要分支设计。
+    var collapsedFrame: NSRect { frame(expanded: false) }
+    /// 飞行 Panel 要压在刘海 Panel **之下**：内容滑进石板区域即被吞没（吸收的错觉）。
+    var panelWindowNumber: Int { panel.windowNumber }
+
     func toggleVisibility() {
         visible.toggle()
         if visible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }

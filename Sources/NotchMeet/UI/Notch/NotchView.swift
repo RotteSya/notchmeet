@@ -112,6 +112,12 @@ final class NotchView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// armed 确认：目标武装完成时光场轻脉冲（飞入仪式落位后由吸气动效驱动同一通道）。
+    func pulseArmed() { luma.pulse() }
+
+    /// 飞入仪式的「吸气」：内容涌入刘海时的持续光场爬升。
+    func inhaleArmed() { luma.inhale() }
+
     // MARK: Build
 
     private func build() {

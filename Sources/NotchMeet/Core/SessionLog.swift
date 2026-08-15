@@ -14,6 +14,10 @@ struct InterviewSession: Codable, Identifiable {
     var endedAt: Date?
     /// 本场选用的稿件名（没选就是 nil）——复盘时要知道当时拿的是哪一份。
     var scriptName: String?
+    /// 本场武装的面试目标（一司一策）。Optional 红线：加非 Optional 字段会让存量
+    /// sessions.json 解码失败（虽然这里解不开只是当空，也没必要丢用户的复盘）。
+    var targetID: String?
+    var targetCompany: String?
     var turns: [Turn]
 
     struct Turn: Codable {
@@ -62,10 +66,12 @@ final class SessionStore {
     // MARK: - 录制
 
     /// 开始新一场。关掉开关时什么都不记。
-    func begin(scriptName: String?) {
+    func begin(scriptName: String?, targetID: String? = nil, targetCompany: String? = nil) {
         guard Settings.keepSessionHistory else { current = nil; return }
         current = InterviewSession(id: UUID().uuidString, startedAt: Date(),
-                                   endedAt: nil, scriptName: scriptName, turns: [])
+                                   endedAt: nil, scriptName: scriptName,
+                                   targetID: targetID, targetCompany: targetCompany,
+                                   turns: [])
     }
 
     func record(question: String, answer: String, source: AnswerSource, at: Date = Date()) {
